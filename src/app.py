@@ -90,46 +90,59 @@ st.set_page_config(
 
 # Easily-configurable download URL for the pre-built database release asset.
 _DB_DOWNLOAD_URL = (
-    "https://github.com/Jonas-dpp/OpenParlament/releases/download/v1.0/openparlament.db"
+    "https://github.com/Jonas-dpp/OpenParlament-online/releases/download/v2.5.0/openparlament.db"
 )
-
 
 @st.cache_resource
 def get_db_path() -> str:
     """Locate or download the combined OpenParlament database.
 
     Resolution order:
-    1. ``data/openparlament.db``  – pre-built / developer copy
-    2. ``openparlament.db``       – previously downloaded copy in the root dir
-    3. Download from :data:`_DB_DOWNLOAD_URL` and save to ``openparlament.db``
+    1. ``data/openparlament.db``  – pre-built / developer copy or previously downloaded
+    2. Download from :data:`_DB_DOWNLOAD_URL` and save to ``data/openparlament.db``
     """
     db_filename = "openparlament.db"
     data_path = os.path.join("data", db_filename)
-    root_path = db_filename
 
+    # 1. Check if the database already exists in the data/ folder
     if os.path.exists(data_path):
         return data_path
 
-    if os.path.exists(root_path):
-        return root_path
-
-    tmp_path = root_path + ".part"
+    # 2. Download and save to data_path
     try:
         os.makedirs("data", exist_ok=True)
-        with st.spinner("Downloading database (this might take a moment)..."):
-            response = requests.get(_DB_DOWNLOAD_URL, stream=True, timeout=120)
-            response.raise_for_status()
-            with open(tmp_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk: f.write(chunk)
-        os.replace(tmp_path, data_path)
+        with st.spinner("Downloading database files (this might take a moment)..."):
+            for ext in ["", "-shm", "-wal"]:
+                file_url = _DB_DOWNLOAD_URL + ext
+                dest_path = data_path + ext
+                
+                # Ensure temporary files are created in the same directory as the destination
+                tmp_path = dest_path + ".part"
+                
+                response = requests.get(file_url, stream=True, timeout=120)
+                
+                # Skip if -shm or -wal files do not exist on the server
+                if response.status_code == 404 and ext in ["-shm", "-wal"]:
+                    continue
+                    
+                response.raise_for_status()
+                
+                with open(tmp_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk: f.write(chunk)
+                
+                os.replace(tmp_path, dest_path)
+                
     except Exception as exc:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        for ext in ["", "-shm", "-wal"]:
+            tmp_path = data_path + ext + ".part"
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+                
         raise RuntimeError(
             f"Could not download the OpenParlament database from {_DB_DOWNLOAD_URL}. "
-            "Please check your network connection or place the file manually "
-            f"in the dir '{data_path}' as '{db_filename}'. Original error: {exc}"
+            "Please check your network connection or place the files manually "
+            f"in the dir '{data_path}'. Original error: {exc}"
         ) from exc
 
     return data_path
