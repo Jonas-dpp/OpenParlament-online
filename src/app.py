@@ -90,7 +90,7 @@ st.set_page_config(
 
 # Easily-configurable download URL for the pre-built database release asset.
 _DB_DOWNLOAD_URL = (
-    "https://github.com/Jonas-dpp/OpenParlament-online/releases/download/v2.5.0/openparlament.db"
+    "https://github.com/Jonas-dpp/OpenParlament-online/releases/download/v2.5.2/openparlament.db"
 )
 
 @st.cache_resource
