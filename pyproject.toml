@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openparlament"
+version = "2.5.0"
+description = "Demokratie-Mining für den Deutschen Bundestag – NLP-gestützte Analyse von Plenarprotokollen"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jonas-dpp" }]
+keywords = ["bundestag", "nlp", "parliament", "politics", "streamlit"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+
+dependencies = [
+    "sqlalchemy>=2.0,<3.0",
+    "requests>=2.31,<3.0",
+    "beautifulsoup4>=4.12,<5.0",
+    "lxml>=5.1,<6.0",
+    "pandas>=2.2,<3.0",
+    "transformers>=4.40,<5.0",
+    "torch>=2.2,<3.0",
+    "streamlit>=1.36,<2.0",
+    "plotly>=5.20,<6.0",
+    "tqdm>=4.66,<5.0",
+    "networkx>=3.2,<4.0",
+    "streamlit-mermaid>=0.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9.0",
+]
+
+[project.scripts]
+openparlament-init   = "scripts.db_init:main"
+openparlament-scrape = "scripts.run_scraper:main"
+openparlament-nlp    = "scripts.run_nlp_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*", "scripts*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts   = "-v --tb=short"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

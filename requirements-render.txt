@@ -1,0 +1,7 @@
+#lightweight requirements for ONLY rendering in Streamlit
+sqlalchemy>=2.0,<3.0
+pandas>=2.2,<3.0
+streamlit>=1.36,<2.0
+plotly>=5.20,<6.0
+streamlit-mermaid>=0.2.0
+networkx>=3.2,<4.0
