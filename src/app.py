@@ -2202,6 +2202,7 @@ st.sidebar.markdown(
     """
     * [Bundestag Open Data](https://www.bundestag.de/services/opendata)  
     * 🔒 [GitHub (Repo is *private* at the moment)](https://github.com/Jonas-dpp/OpenParlament) 🔒 
+    * 🌐 [GitHub (Public Release Repo)](https://github.com/Jonas-dpp/OpenParlament-online) 🌐 
     """
 )
 
