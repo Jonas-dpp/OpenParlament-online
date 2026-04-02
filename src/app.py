@@ -55,6 +55,7 @@ from sqlalchemy import func, select, inspect as sa_inspect
 from typing import Optional
 import datetime
 import os
+import requests
 
 from src.database import get_session, init_db
 from src.analytics import (
@@ -84,8 +85,62 @@ st.set_page_config(
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Database location / download
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Easily-configurable download URL for the pre-built database release asset.
+_DB_DOWNLOAD_URL = (
+    "https://github.com/Jonas-dpp/OpenParlament/releases/download/v1.0/openparlament.db"
+)
+
+
+@st.cache_resource
+def get_db_path() -> str:
+    """Locate or download the combined OpenParlament database.
+
+    Resolution order:
+    1. ``data/openparlament.db``  – pre-built / developer copy
+    2. ``openparlament.db``       – previously downloaded copy in the root dir
+    3. Download from :data:`_DB_DOWNLOAD_URL` and save to ``openparlament.db``
+    """
+    db_filename = "openparlament.db"
+    data_path = os.path.join("data", db_filename)
+    root_path = db_filename
+
+    if os.path.exists(data_path):
+        return data_path
+
+    if os.path.exists(root_path):
+        return root_path
+
+    tmp_path = root_path + ".part"
+    try:
+        os.makedirs("data", exist_ok=True)
+        with st.spinner("Downloading database (this might take a moment)..."):
+            response = requests.get(_DB_DOWNLOAD_URL, stream=True, timeout=120)
+            response.raise_for_status()
+            with open(tmp_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk: f.write(chunk)
+        os.replace(tmp_path, data_path)
+    except Exception as exc:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+        raise RuntimeError(
+            f"Could not download the OpenParlament database from {_DB_DOWNLOAD_URL}. "
+            "Please check your network connection or place the file manually "
+            f"in the dir '{data_path}' as '{db_filename}'. Original error: {exc}"
+        ) from exc
+
+    return data_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Initialise DB (creates tables if absent)
 # ─────────────────────────────────────────────────────────────────────────────
+
+if not os.environ.get("OPENPARLAMENT_DB_URL"):
+    os.environ["OPENPARLAMENT_DB_URL"] = "sqlite:///" + Path(get_db_path()).resolve().as_posix()
 
 init_db()
 
