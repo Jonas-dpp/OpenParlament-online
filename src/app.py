@@ -1155,19 +1155,54 @@ def render_scraping_monitor() -> None:
             col3.metric("Zwischenrufe gesamt", int(df_zr_stats["gesamt"].sum()))
 
         st.subheader("Datenbestand nach Wahlperiode")
-        fig_overview = px.bar(
-            df_overview,
-            x="wahlperiode",
-            y=["sitzungen", "reden"],
-            barmode="group",
-            title="Sitzungen und Reden je Wahlperiode",
-            labels={
-                "wahlperiode": "Wahlperiode",
-                "value": "Anzahl",
-                "variable": "Kategorie",
-            },
-        )
-        st.plotly_chart(fig_overview, width="stretch")
+        col_plot1, col_plot2, col_plot3 = st.columns(3) # Drei Spalten für die Plots in einer Zeile
+        
+        # Plot 1: Sitzungen (Linke Spalte)
+        with col_plot1:
+            fig_sitzungen = px.bar(
+                df_overview,
+                x="wahlperiode",
+                y="sitzungen",
+                title="Sitzungen je Wahlperiode",
+                labels={
+                    "wahlperiode": "Wahlperiode",
+                    "sitzungen": "Anzahl Sitzungen",
+                },
+                color_discrete_sequence=["#291fb4"] # Optional: Blau
+            )
+            st.plotly_chart(fig_sitzungen, width="stretch")
+
+        # Plot 2: Reden (Rechte Spalte)
+        with col_plot2:
+            fig_reden = px.bar(
+                df_overview,
+                x="wahlperiode",
+                y="reden",
+                title="Reden je Wahlperiode",
+                labels={
+                    "wahlperiode": "Wahlperiode",
+                    "reden": "Anzahl Reden",
+                },
+                color_discrete_sequence=["#ff7f0e"] # Optional: Orange zur Unterscheidung
+            )
+            st.plotly_chart(fig_reden, width="stretch")
+        
+        # Plot 3: Zwischenrufe (Rechte Spalte, nur wenn Daten vorhanden)
+        if not df_zr_stats.empty:
+            with col_plot3:
+                fig_zr = px.bar(
+                    df_zr_stats,
+                    x="wahlperiode",
+                    y="gesamt", # Hier wird die Spalte "gesamt" aus df_zr_stats verwendet
+                    title="Zwischenrufe",
+                    labels={
+                        "wahlperiode": "Wahlperiode",
+                        "gesamt": "Anzahl",
+                    },
+                    color_discrete_sequence=["#2ca090"] # Grün zur Unterscheidung
+                )
+                st.plotly_chart(fig_zr, width="stretch")
+
 
         if not df_zr_stats.empty:
             st.subheader("NLP-Pipeline-Abdeckung")
