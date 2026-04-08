@@ -4,17 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "openparlament"
-version = "2.5.0"
-description = "Demokratie-Mining für den Deutschen Bundestag – NLP-gestützte Analyse von Plenarprotokollen"
+version = "3.0.0"
+description = "Demokratie-Mining für den Deutschen Bundestag – NLP-gestützte Analyse von Plenarprotokollen (14 Analysen, v3.0.0)"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-or-later" }
 authors = [{ name = "Jonas-dpp" }]
 keywords = ["bundestag", "nlp", "parliament", "politics", "streamlit"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -42,9 +42,10 @@ dev = [
 ]
 
 [project.scripts]
-openparlament-init   = "scripts.db_init:main"
-openparlament-scrape = "scripts.run_scraper:main"
-openparlament-nlp    = "scripts.run_nlp_cli:main"
+openparlament-init      = "scripts.db_init:main"
+openparlament-scrape    = "scripts.run_scraper:main"
+openparlament-nlp       = "scripts.run_nlp_cli:main"
+openparlament-dashboard = "scripts.run_dashboard:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

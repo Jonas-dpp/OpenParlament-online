@@ -1,4 +1,21 @@
 """
+OpenParlament - Streamlit Dashboard
+Copyright (C) 2026 Jonas-dpp
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+--------------------------------------------------------------------------
 Unit tests for OpenParlament core modules.
 
 Tests use only stdlib + sqlalchemy (no torch/transformers required) so they
@@ -7,6 +24,7 @@ run in CI without GPU or large model downloads.
 
 from __future__ import annotations
 
+import ast
 import textwrap
 from pathlib import Path
 from unittest.mock import patch
@@ -2629,6 +2647,71 @@ class TestTOPAnalyse:
             df = TOPAnalyse(s).kategorie_by_top()
         assert df.empty
 
+    def test_aggression_by_top_null_sentiment_still_returns_top(self):
+        """TOPs whose Zwischenrufe all have NULL sentiment_score must still appear.
+
+        Regression guard: if `.where(Zwischenruf.sentiment_score.isnot(None))`
+        is ever re-added to the query, this test will fail immediately, exposing
+        the regression (all TOP data would vanish for any DB that hasn't been
+        run through the NLP pipeline yet).
+        """
+        import math
+        from datetime import date
+        from src.analytics import TOPAnalyse
+        with get_session() as s:
+            sitzung = Sitzung(wahlperiode=20, sitzungsnr=77, datum=date(2022, 5, 1), gesamtwortzahl=100)
+            redner = Redner(vorname="Bob", nachname="Null", fraktion="Grüne")
+            rede = Rede(
+                sitzung=sitzung, redner=redner, text="Test speech",
+                tagesordnungspunkt="TOP 7 – Null-Test", wortanzahl=3,
+            )
+            # All Zwischenrufe have sentiment_score=None (NLP not yet run)
+            z1 = Zwischenruf(rede=rede, text="Widerspruch", fraktion="AfD",
+                             sentiment_score=None, kategorie="Widerspruch")
+            z2 = Zwischenruf(rede=rede, text="Unruhe", fraktion="CDU/CSU",
+                             sentiment_score=None, kategorie="Unruhe")
+            s.add_all([sitzung, redner, rede, z1, z2])
+        with get_session() as s:
+            df = TOPAnalyse(s).aggression_by_top(min_reden=1)
+        assert not df.empty, "TOP with un-scored Zwischenrufe must still appear"
+        assert "TOP 7 – Null-Test" in df["tagesordnungspunkt"].values
+        row = df[df["tagesordnungspunkt"] == "TOP 7 – Null-Test"].iloc[0]
+        # SQL AVG over all-NULL values returns NULL → avg_aggression is NaN
+        assert math.isnan(row["avg_aggression"]), "avg_aggression must be NaN when all scores are NULL"
+        # Total interjection count must still be counted correctly
+        assert row["gesamt_zwischenrufe"] == 2
+
+    def test_aggression_by_top_unscored_sorted_by_gesamt_zwischenrufe(self):
+        """When avg_aggression is NaN (no NLP scores), secondary sort by gesamt_zwischenrufe applies."""
+        from datetime import date
+        from src.analytics import TOPAnalyse
+        with get_session() as s:
+            sitzung = Sitzung(wahlperiode=20, sitzungsnr=88, datum=date(2022, 6, 1), gesamtwortzahl=100)
+            redner = Redner(vorname="Carol", nachname="Sort", fraktion="FDP")
+            rede_a = Rede(
+                sitzung=sitzung, redner=redner, text="Rede A",
+                tagesordnungspunkt="TOP A – Viele Rufe", wortanzahl=3,
+            )
+            rede_b = Rede(
+                sitzung=sitzung, redner=redner, text="Rede B",
+                tagesordnungspunkt="TOP B – Wenig Rufe", wortanzahl=3,
+            )
+            # TOP A: 3 un-scored interjections; TOP B: 1 un-scored interjection
+            for _ in range(3):
+                s.add(Zwischenruf(rede=rede_a, text="Widerspruch", fraktion="AfD",
+                                  sentiment_score=None, kategorie="Widerspruch"))
+            s.add(Zwischenruf(rede=rede_b, text="Beifall", fraktion="SPD",
+                              sentiment_score=None, kategorie="Beifall"))
+            s.add_all([sitzung, redner, rede_a, rede_b])
+        with get_session() as s:
+            df = TOPAnalyse(s).aggression_by_top(min_reden=1)
+        assert not df.empty
+        assert len(df) == 2
+        # All avg_aggression values must be NaN (no NLP scores)
+        assert df["avg_aggression"].isna().all()
+        # TOP A (3 interjections) must come before TOP B (1 interjection)
+        assert df.iloc[0]["tagesordnungspunkt"] == "TOP A – Viele Rufe"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # I. KategorieAnalyse tests  (v2.2.0)
@@ -3196,3 +3279,415 @@ class TestAdressatenAnalyse:
             df = AdressatenAnalyse(s).fraktion_targets_fraktion()
         assert df.empty
         assert list(df.columns) == ["fraktion", "adressat", "anzahl"]
+
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# N. RednerVergleich tests  (v3.0.0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestRednerVergleich:
+    """Tests for RednerVergleich: side-by-side MP comparison."""
+
+    def _seed(self, session):
+        from datetime import date
+        sz = Sitzung(wahlperiode=20, sitzungsnr=90, datum=date(2023, 3, 1), gesamtwortzahl=200)
+        r1 = Redner(vorname="Anna", nachname="Beispiel", fraktion="SPD")
+        r2 = Redner(vorname="Bernd", nachname="Muster", fraktion="CDU/CSU")
+        rede1 = Rede(
+            sitzung=sz, redner=r1, text="Rede A", wortanzahl=50,
+            sentiment_score=0.3,
+            tone_scores={"Aggression": 0.1, "Sarkasmus": 0.2, "Humor": 0.3, "Neutral": 0.4},
+        )
+        rede2 = Rede(
+            sitzung=sz, redner=r2, text="Rede B", wortanzahl=80,
+            sentiment_score=-0.2,
+            tone_scores={"Aggression": 0.5, "Sarkasmus": 0.2, "Humor": 0.1, "Neutral": 0.2},
+        )
+        zr1 = Zwischenruf(rede=rede1, text="Buh!", fraktion="CDU/CSU", sentiment_score=-0.7)
+        zr2 = Zwischenruf(rede=rede2, text="Gut!", fraktion="SPD", sentiment_score=0.5)
+        session.add_all([sz, r1, r2, rede1, rede2, zr1, zr2])
+        session.flush()
+        return r1.redner_id, r2.redner_id
+
+    def test_compare_tone_profiles_columns(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            df = RednerVergleich(s).compare_tone_profiles(r1_id, r2_id)
+        assert list(df.columns) == ["label", "speaker_a", "speaker_b"]
+        assert len(df) == 4
+        assert set(df["label"]) == {"Aggression", "Sarkasmus", "Humor", "Neutral"}
+
+    def test_compare_tone_profiles_values_in_range(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            df = RednerVergleich(s).compare_tone_profiles(r1_id, r2_id, wahlperiode=20)
+        assert (df["speaker_a"] >= 0).all() and (df["speaker_a"] <= 1).all()
+        assert (df["speaker_b"] >= 0).all() and (df["speaker_b"] <= 1).all()
+
+    def test_compare_tone_profiles_date_filter(self):
+        """Date filter excludes speeches outside the range."""
+        from datetime import date
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            # Seed is on 2023-03-01; filter after → empty profiles
+            df = RednerVergleich(s).compare_tone_profiles(
+                r1_id, r2_id, datum_von=date(2024, 1, 1)
+            )
+        assert (df["speaker_a"] == 0.0).all()
+        assert (df["speaker_b"] == 0.0).all()
+
+    def test_compare_speech_stats_columns(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            df = RednerVergleich(s).compare_speech_stats(r1_id, r2_id)
+        assert list(df.columns) == ["Metrik", "speaker_a", "speaker_b"]
+        assert len(df) == 3
+
+    def test_compare_speech_stats_reden_count(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            df = RednerVergleich(s).compare_speech_stats(r1_id, r2_id, wahlperiode=20)
+        reden_row = df[df["Metrik"] == "Reden"]
+        assert not reden_row.empty
+        assert reden_row.iloc[0]["speaker_a"] == 1
+        assert reden_row.iloc[0]["speaker_b"] == 1
+
+    def test_compare_aggression_columns(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            df = RednerVergleich(s).compare_aggression(r1_id, r2_id)
+        assert list(df.columns) == ["Metrik", "speaker_a", "speaker_b"]
+        assert "Zwischenrufe gesamt" in df["Metrik"].values
+
+    def test_compare_aggression_neg_count(self):
+        """r1 receives 1 negative interjection; r2 receives 1 positive."""
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            r1_id, r2_id = self._seed(s)
+        with get_session() as s:
+            df = RednerVergleich(s).compare_aggression(r1_id, r2_id, wahlperiode=20)
+        neg_row = df[df["Metrik"] == "Negative Zwischenrufe"]
+        assert not neg_row.empty
+        # r1 has 1 negative interjection, r2 has 0 negative interjections
+        assert neg_row.iloc[0]["speaker_a"] == 1
+        assert neg_row.iloc[0]["speaker_b"] == 0
+
+    def test_compare_tone_profiles_empty_db(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            df = RednerVergleich(s).compare_tone_profiles(999, 1000)
+        assert not df.empty  # returns zero-filled rows
+        assert (df["speaker_a"] == 0.0).all()
+
+    def test_compare_speech_stats_empty_db(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            df = RednerVergleich(s).compare_speech_stats(999, 1000)
+        assert not df.empty
+        assert (df["speaker_a"] == 0).all()
+
+    def test_compare_aggression_empty_db(self):
+        from src.analytics import RednerVergleich
+        with get_session() as s:
+            df = RednerVergleich(s).compare_aggression(999, 1000)
+        assert not df.empty
+        assert (df["speaker_a"] == 0).all()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# O. FraktionsDynamik tests  (v3.0.0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestFraktionsDynamik:
+    """Tests for FraktionsDynamik: faction tone timeline and sunburst."""
+
+    def _seed(self, session):
+        from datetime import date
+        sz = Sitzung(wahlperiode=20, sitzungsnr=91, datum=date(2023, 5, 15), gesamtwortzahl=100)
+        r1 = Redner(vorname="Clara", nachname="Test", fraktion="SPD")
+        rede1 = Rede(sitzung=sz, redner=r1, text="Rede X", wortanzahl=30)
+        zr1 = Zwischenruf(
+            rede=rede1, text="Pfui!", fraktion="CDU/CSU",
+            ton_label="Aggression", sentiment_score=-0.8,
+        )
+        zr2 = Zwischenruf(
+            rede=rede1, text="Bravo!", fraktion="SPD",
+            ton_label="Humor", sentiment_score=0.6,
+        )
+        session.add_all([sz, r1, rede1, zr1, zr2])
+        session.flush()
+
+    def test_tone_timeline_columns(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).tone_timeline(wahlperiode=20)
+        assert list(df.columns) == ["monat", "fraktion", "ton_label", "anzahl"]
+
+    def test_tone_timeline_has_data(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).tone_timeline(wahlperiode=20)
+        assert not df.empty
+        assert "2023-05" in df["monat"].values
+
+    def test_tone_timeline_date_filter(self):
+        """Date filter before the seeded session should yield empty result."""
+        from datetime import date
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).tone_timeline(datum_bis=date(2022, 12, 31))
+        assert df.empty
+
+    def test_aggression_timeline_columns(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).aggression_timeline(wahlperiode=20)
+        assert list(df.columns) == [
+            "monat", "fraktion", "avg_aggression", "neg_count", "total_count"
+        ]
+
+    def test_aggression_timeline_cdu_negative(self):
+        """CDU/CSU interjection has negative sentiment → positive avg_aggression."""
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).aggression_timeline(wahlperiode=20)
+        cdu_row = df[df["fraktion"].str.contains("CDU", na=False)]
+        assert not cdu_row.empty
+        assert cdu_row.iloc[0]["avg_aggression"] > 0
+
+    def test_sunburst_data_columns(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).sunburst_data(wahlperiode=20)
+        assert list(df.columns) == ["fraktion", "ton_label", "anzahl"]
+
+    def test_sunburst_data_has_rows(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            self._seed(s)
+        with get_session() as s:
+            df = FraktionsDynamik(s).sunburst_data(wahlperiode=20)
+        assert not df.empty
+        # Two interjections with ton_label set → 2 rows
+        assert len(df) == 2
+
+    def test_tone_timeline_empty_db(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            df = FraktionsDynamik(s).tone_timeline()
+        assert df.empty
+        assert list(df.columns) == ["monat", "fraktion", "ton_label", "anzahl"]
+
+    def test_aggression_timeline_empty_db(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            df = FraktionsDynamik(s).aggression_timeline()
+        assert df.empty
+
+    def test_sunburst_data_empty_db(self):
+        from src.analytics import FraktionsDynamik
+        with get_session() as s:
+            df = FraktionsDynamik(s).sunburst_data()
+        assert df.empty
+        assert list(df.columns) == ["fraktion", "ton_label", "anzahl"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# App spinner coverage (static AST analysis – no Streamlit import required)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestAppSpinners:
+    """Verify via AST that every render function and startup code uses st.spinner."""
+
+    _APP_PATH = Path(__file__).resolve().parents[1] / "src" / "app.py"
+
+    @pytest.fixture(autouse=True)
+    def _load_tree(self):
+        source = self._APP_PATH.read_text(encoding="utf-8")
+        self._tree = ast.parse(source)
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _func_node(self, name: str) -> ast.FunctionDef | None:
+        """Return the AST node for a top-level function definition."""
+        for node in ast.walk(self._tree):
+            if isinstance(node, ast.FunctionDef) and node.name == name:
+                return node
+        return None
+
+    def _spinners_in(self, root: ast.AST) -> list[str | None]:
+        """Return spinner messages from all ``with st.spinner(...)`` blocks.
+
+        Any ``st.spinner(...)`` context manager counts as a spinner, even when
+        its message is built dynamically (for example via an f-string or a
+        variable). When the first positional argument is a constant string, that
+        string is returned; otherwise ``None`` is recorded for that spinner.
+        """
+        msgs: list[str | None] = []
+        for node in ast.walk(root):
+            if not isinstance(node, ast.With):
+                continue
+            for item in node.items:
+                call = item.context_expr
+                if not (
+                    isinstance(call, ast.Call)
+                    and isinstance(call.func, ast.Attribute)
+                    and call.func.attr == "spinner"
+                    and isinstance(call.func.value, ast.Name)
+                    and call.func.value.id == "st"
+                ):
+                    continue
+
+                if (
+                    call.args
+                    and isinstance(call.args[0], ast.Constant)
+                    and isinstance(call.args[0].value, str)
+                ):
+                    msgs.append(call.args[0].value)
+                else:
+                    msgs.append(None)
+        return msgs
+
+    def _with_calls(self, root: ast.AST, func_name: str) -> bool:
+        """Return True if *root* contains a direct Call to *func_name*."""
+        for node in ast.walk(root):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == func_name
+            ):
+                return True
+        return False
+
+    # ── parametrised: every render function must have at least one spinner ────
+
+    @pytest.mark.parametrize(
+        "func_name",
+        [
+            "render_startseite",
+            "render_aggressions_radar",
+            "render_themen_trend",
+            "render_interaktions_netzwerk",
+            "render_ton_analyse",
+            "render_adressaten_analyse",
+            "render_scraping_monitor",
+            "render_db_uebersicht",
+            "render_wahlperioden_vergleich",
+            "render_top_analyse",
+            "render_reaktions_analyse",
+            "render_redezeit_analyse",
+            "render_debattenklima",
+            "render_redner_profil",
+            "render_redner_vergleich",
+            "render_fraktions_dynamik",
+        ],
+    )
+    def test_render_function_has_spinner(self, func_name: str) -> None:
+        node = self._func_node(func_name)
+        assert node is not None, f"Function {func_name!r} not found in src/app.py"
+        msgs = self._spinners_in(node)
+        assert msgs, (
+            f"{func_name}() contains no st.spinner() call. "
+            "Every render function must wrap its DB queries with st.spinner()."
+        )
+
+    # ── init_db() must be wrapped in st.spinner() at module level ─────────────
+
+    def test_init_db_wrapped_in_spinner(self) -> None:
+        """init_db() at module level must be inside a ``with st.spinner(...)`` block."""
+        for stmt in self._tree.body:
+            if not isinstance(stmt, ast.With):
+                continue
+            is_spinner = any(
+                isinstance(item.context_expr, ast.Call)
+                and isinstance(item.context_expr.func, ast.Attribute)
+                and item.context_expr.func.attr == "spinner"
+                and isinstance(item.context_expr.func.value, ast.Name)
+                and item.context_expr.func.value.id == "st"
+                for item in stmt.items
+            )
+            if is_spinner and self._with_calls(stmt, "init_db"):
+                return
+        pytest.fail(
+            "init_db() must be called inside a st.spinner() context at module level."
+        )
+
+    # ── sidebar filter helpers must be loaded inside a st.spinner() ───────────
+
+    @staticmethod
+    def _is_sidebar_ctx(with_node: ast.With) -> bool:
+        """Return True if *with_node* is a ``with st.sidebar:`` block."""
+        return any(
+            isinstance(item.context_expr, ast.Attribute)
+            and item.context_expr.attr == "sidebar"
+            and isinstance(item.context_expr.value, ast.Name)
+            and item.context_expr.value.id == "st"
+            for item in with_node.items
+        )
+
+    def _sidebar_spinner_calls(self, helper_name: str) -> bool:
+        """Return True when *helper_name* is called inside a spinner that is itself
+        inside a module-level ``with st.sidebar:`` block."""
+        for stmt in self._tree.body:
+            if not isinstance(stmt, ast.With) or not self._is_sidebar_ctx(stmt):
+                continue
+            for inner in ast.walk(stmt):
+                if not isinstance(inner, ast.With):
+                    continue
+                is_spinner = any(
+                    isinstance(item.context_expr, ast.Call)
+                    and isinstance(item.context_expr.func, ast.Attribute)
+                    and item.context_expr.func.attr == "spinner"
+                    and isinstance(item.context_expr.func.value, ast.Name)
+                    and item.context_expr.func.value.id == "st"
+                    for item in inner.items
+                )
+                if is_spinner and self._with_calls(inner, helper_name):
+                    return True
+        return False
+
+    def test_sidebar_wahlperioden_has_spinner(self) -> None:
+        """_get_wahlperioden() must be inside a st.spinner() within a st.sidebar block."""
+        assert self._sidebar_spinner_calls("_get_wahlperioden"), (
+            "_get_wahlperioden() must be called inside a st.spinner() context "
+            "within a module-level st.sidebar block."
+        )
+
+    def test_sidebar_fraktionen_has_spinner(self) -> None:
+        """_get_fraktionen() must be inside a st.spinner() within a st.sidebar block."""
+        assert self._sidebar_spinner_calls("_get_fraktionen"), (
+            "_get_fraktionen() must be called inside a st.spinner() context "
+            "within a module-level st.sidebar block."
+        )
+
+    def test_sidebar_date_range_has_spinner(self) -> None:
+        """_get_date_range() must be inside a st.spinner() within a st.sidebar block."""
+        assert self._sidebar_spinner_calls("_get_date_range"), (
+            "_get_date_range() must be called inside a st.spinner() context "
+            "within a module-level st.sidebar block."
+        )

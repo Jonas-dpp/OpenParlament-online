@@ -1,4 +1,21 @@
 """
+OpenParlament - Streamlit Dashboard
+Copyright (C) 2026 Jonas-dpp
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+--------------------------------------------------------------------------
 run_scraper.py – Download Bundestag plenary protocols and import them into the DB.
 """
 
@@ -234,8 +251,8 @@ def run_nlp_scoring(
                     if tones and is_column_attr(cls, "ton_label"):
                         label, scores = tones[i]
                         row_map["ton_label"] = label
-                        if is_column_attr(cls, "ton_scores"):
-                            row_map["ton_scores"] = _serialize_for_column(cls, "ton_scores", scores)
+                        if is_column_attr(cls, "tone_scores"):
+                            row_map["tone_scores"] = _serialize_for_column(cls, "tone_scores", scores)
 
                     if addressees and is_column_attr(cls, "adressaten"):
                         row_map["adressaten"] = _serialize_for_column(cls, "adressaten", addressees[i])
