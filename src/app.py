@@ -1,7 +1,24 @@
 """
+OpenParlament - Streamlit Dashboard
+Copyright (C) 2026 Jonas-dpp
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+--------------------------------------------------------------------------
 Streamlit dashboard for OpenParlament.
 
-Fourteen pages map to a landing page, the core experiments, and informational
+Sixteen pages map to a landing page, the core experiments, and informational
 tools:
 
   Willkommen:
@@ -22,11 +39,13 @@ tools:
   Redezeit-Gerechtigkeit (Experiment M, v2.2.0)
   Debattenklima-Index    (Experiment L, v2.4.0)
   Redner-Profil          (Experiment K, v2.4.0)
+  Redner-Vergleich       (Experiment N, v3.0.0)
   Wahlperioden-Vergleich (Experiment G)
 
   Werkzeuge & Daten:
+  Fraktions-Dynamik      (Experiment O, v3.0.0)
   Scraping-Monitor       (Experiment F)
-  DB-Übersicht           – Visual DB schema, row counts, ER diagram (v2.6.0)
+  DB-Übersicht           – Visual DB schema, row counts, ER diagram (v2.5.0)
 
 Navigation uses the native ``st.navigation`` / ``st.Page`` API (Streamlit ≥ 1.36)
 with five grouped categories in the sidebar.  Pages can still be reached
@@ -39,6 +58,7 @@ Run with:
 from __future__ import annotations
 
 import sys
+import math
 from pathlib import Path
 
 # Allow running as ``streamlit run src/app.py`` from the project root.
@@ -71,6 +91,8 @@ from src.analytics import (
     RedeZeitAnalyse,
     SitzungsKlima,
     RednerProfil,
+    RednerVergleich,
+    FraktionsDynamik,
 )
 from src.models import Sitzung, Redner, Rede, Zwischenruf
 
@@ -155,7 +177,8 @@ def get_db_path() -> str:
 if not os.environ.get("OPENPARLAMENT_DB_URL"):
     os.environ["OPENPARLAMENT_DB_URL"] = "sqlite:///" + Path(get_db_path()).resolve().as_posix()
 
-init_db()
+with st.spinner("Initialisiere Datenbank..."):
+    init_db()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -353,11 +376,41 @@ def render_startseite() -> None:
         unsafe_allow_html=True,
     )
 
+    # ── Experiments list (defined early so hero badge can use len()) ─────────────
+    # Contains the 14 actual NLP / analytics experiments (A–O, excl. J).
+    # Order mirrors the sidebar navigation groups.
+    _experiments = [
+        # Kern-Analysen
+        ("🔥", "Aggressions-Radar",      "Wer kassiert / verteilt die meisten negativen Zwischenrufe?",                   "v1.0.0"),
+        ("📈", "Themen-Trend",            "Wann dominieren welche Schlagworte? (inkl. Multi-WP & Reizwort-Index)",        "v1.0.0 / v2.3.0"),
+        ("🕸️", "Interaktions-Netzwerk",   "Welche Fraktionen unterbrechen sich wie oft? (inkl. Gephi-Export)",            "v1.0.0"),
+        ("🏛️", "Tagesordnungspunkte",     "Welche Agenda-Items provozieren die meisten negativen Reaktionen?",            "v2.2.0"),
+        # Sprache & Ton
+        ("🎭", "Ton-Analyse",             "Wie ist der rhetorische Ton: Aggression, Sarkasmus, Humor oder Neutral?",      "v1.2.0"),
+        ("🎯", "Adressaten-Analyse",      "An wen richtet sich ein Zwischenruf oder eine Rede?",                          "v1.2.0"),
+        ("👏", "Reaktions-Analyse",       "Wer produziert Beifall, wer Widerspruch? Civility-Index pro Fraktionspaar.",   "v2.2.0"),
+        # Parlaments-Metriken
+        ("⏱️", "Redezeit-Gerechtigkeit",  "Wird Redezeit proportional zur Fraktionsgröße verteilt?",                      "v2.2.0"),
+        ("🌡️", "Debattenklima-Index",     "Wie heiß war das Parlament pro Sitzung? (Composite Temperatur-Index)",         "v2.4.0"),
+        ("🎤", "Redner-Profil",           "Was ist das rhetorische DNA-Profil jedes Abgeordneten?",                       "v2.4.0"),
+        ("👥", "Redner-Vergleich",        "Vergleiche zwei Abgeordnete direkt: Ton, Aggression, Redeaktivität.",          "v3.0.0"),
+        ("📡", "Fraktions-Dynamik",       "Radar & Zeitreihen: Wie entwickelt sich der Ton der Fraktionen?",              "v3.0.0"),
+        ("⚖️", "Wahlperioden-Vergleich",  "Wie unterscheiden sich verschiedene Legislaturperioden in Ton & Aktivität?",   "v2.0.0"),
+    ]
+    # Utility/data pages listed separately so they are shown in the overview
+    # table but do not inflate the "N Analysen" badge count.
+    _tools = [
+        ("📊", "Scraping-Monitor",        "Wie ist der Datenbestand und NLP-Abdeckungsgrad?",                             "v1.2.0"),
+        ("🗄️", "DB-Übersicht",            "Übersicht über die Datenbank und ihre Inhalte.",                               "v2.5.0"),
+    ]
+    _num_analysen = len(_experiments)  # 13
+
     # ── Live stats ─────────────────────────────────────────────────────────────
-    with get_session() as session:
-        monitor = ScrapingMonitor(session)
-        df_overview = monitor.overview()
-        df_zr = monitor.zwischenruf_stats()
+    with st.spinner("Lade Live-Statistiken..."):
+        with get_session() as session:
+            monitor = ScrapingMonitor(session)
+            df_overview = monitor.overview()
+            df_zr = monitor.zwischenruf_stats()
 
     total_sitzungen  = int(df_overview["sitzungen"].sum()) if not df_overview.empty else 0
     total_reden      = int(df_overview["reden"].sum())     if not df_overview.empty else 0
@@ -369,7 +422,7 @@ def render_startseite() -> None:
 
     with hero_left:
         st.markdown(
-            """
+            f"""
 <div class="op-hero">
   <div class="op-hero-title">🏛️ OpenParlament</div>
   <div class="op-hero-subtitle">Demokratie-Mining — die digitale Röntgenaufnahme des Bundestags</div>
@@ -377,6 +430,17 @@ def render_startseite() -> None:
     Analysiere Plenarprotokolle des Deutschen Bundestags mit NLP.
     Zwischenrufe, Themenkonjunkturen und rhetorische Muster —
     <strong>100 % lokal</strong>, ohne API-Kosten, mit quelloffenen KI-Modellen.
+  </div>
+  <div style="margin-top:1rem;display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+    <span style="background:#1e3a5f;color:#93C5FD;border:1px solid #3B82F6;
+                 border-radius:0.4rem;padding:0.25rem 0.75rem;font-size:0.8rem;font-weight:700;
+                 letter-spacing:0.04em;">v3.0.0</span>
+    <span style="background:#1a3327;color:#6EE7B7;border:1px solid #059669;
+                 border-radius:0.4rem;padding:0.25rem 0.75rem;font-size:0.8rem;font-weight:700;
+                 letter-spacing:0.04em;">🎓 Schülerprojekt</span>
+    <span style="background:#2d1e40;color:#C4B5FD;border:1px solid #7C3AED;
+                 border-radius:0.4rem;padding:0.25rem 0.75rem;font-size:0.8rem;font-weight:700;
+                 letter-spacing:0.04em;">{_num_analysen} Analysen</span>
   </div>
 </div>
             """,
@@ -418,6 +482,19 @@ def render_startseite() -> None:
             title=dict(text="Ton-Profil (Beispiel)", font=dict(color="#9CA3AF", size=12)),
         )
         st.plotly_chart(_fig_hero, width="stretch")
+
+    st.divider()
+
+    # ── Disclaimer ─────────────────────────────────────────────────────────────
+    st.info(
+        "⚠️ **Disclaimer** — OpenParlament ist ein **Schülerprojekt** zu Lehr- und "
+        "Forschungszwecken. Die Analyseergebnisse basieren auf automatisierten NLP-Verfahren "
+        "und stellen **keine politische Stellungnahme** dar. Alle Daten stammen aus den "
+        "öffentlich zugänglichen Plenarprotokollen des Deutschen Bundestags "
+        "([Bundestag Open Data](https://www.bundestag.de/services/opendata)). "
+        "Der Quellcode steht unter der **GNU AGPL v3**-Lizenz.",
+        icon="ℹ️",
+    )
 
     st.divider()
 
@@ -489,26 +566,37 @@ def render_startseite() -> None:
     st.divider()
 
     # ── Alle Analysen im Überblick ─────────────────────────────────────────────
-    st.subheader("🔬 Alle 12 Analysen im Überblick")
+    st.subheader(f"🔬 Alle {_num_analysen} Analysen im Überblick")
 
-    _experiments = [
-        ("🔥", "Aggressions-Radar",      "Wer kassiert / verteilt die meisten negativen Zwischenrufe?",                   "v1.0.0"),
-        ("📈", "Themen-Trend",            "Wann dominieren welche Schlagworte? (inkl. Multi-WP & Reizwort-Index)",        "v1.0.0 / v2.3.0"),
-        ("🕸️", "Interaktions-Netzwerk",   "Welche Fraktionen unterbrechen sich wie oft? (inkl. Gephi-Export)",            "v1.0.0"),
-        ("🎭", "Ton-Analyse",             "Wie ist der rhetorische Ton: Aggression, Sarkasmus, Humor oder Neutral?",      "v1.2.0"),
-        ("🎯", "Adressaten-Analyse",      "An wen richtet sich ein Zwischenruf oder eine Rede?",                          "v1.2.0"),
-        ("⚖️", "Wahlperioden-Vergleich",  "Wie unterscheiden sich verschiedene Legislaturperioden in Ton & Aktivität?",   "v2.0.0"),
-        ("🏛️", "Tagesordnungspunkte",     "Welche Agenda-Items provozieren die meisten negativen Reaktionen?",            "v2.2.0"),
-        ("👏", "Reaktions-Analyse",       "Wer produziert Beifall, wer Widerspruch? Civility-Index pro Fraktionspaar.",   "v2.2.0"),
-        ("⏱️", "Redezeit-Gerechtigkeit",  "Wird Redezeit proportional zur Fraktionsgröße verteilt?",                      "v2.2.0"),
-        ("🌡️", "Debattenklima-Index",     "Wie heiß war das Parlament pro Sitzung? (Composite Temperatur-Index)",         "v2.4.0"),
-        ("🎤", "Redner-Profil",           "Was ist das rhetorische DNA-Profil jedes Abgeordneten?",                       "v2.4.0"),
-        ("📊", "Scraping-Monitor",        "Wie ist der Datenbestand und NLP-Abdeckungsgrad?",                             "v1.2.0"),
-        ("🗄️", "DB-Übersicht",            "Übersicht über die Datenbank und ihre Inhalte.",                               "v2.5.0")
-    ]
     df_exp = pd.DataFrame(_experiments, columns=["Icon", "Analyse", "Frage", "Seit"])
     st.dataframe(df_exp, width="stretch", hide_index=True)
 
+    st.caption("🛠️ Werkzeuge & Daten")
+    df_tools = pd.DataFrame(_tools, columns=["Icon", "Analyse", "Frage", "Seit"])
+    st.dataframe(df_tools, width="stretch", hide_index=True)
+
+    st.divider()
+
+
+    # ── Versioning & Student Project Note ─────────────────────────────────────
+    st.subheader("🎓 Über dieses Projekt")
+    st.markdown(
+        """
+**OpenParlament** ist ein **Schülerprojekt** und entsteht im Rahmen einer akademischen Auseinandersetzung
+mit Digital-Humanities, NLP und politischer Transparenz.  Es wird öffentlich entwickelt und
+kontinuierlich weiterentwickelt — Feedback und Pull-Requests sind herzlich willkommen!
+
+| Version | Highlights |
+|---------|-----------|
+| **v3.0.0** *(aktuell)* | **Redner-Vergleich** (Experiment N): zwei Abgeordnete direkt gegenüberstellen mit überlappenden Radar-Charts & Divergenz-Balken. **Fraktions-Dynamik** (Experiment O): Sunburst-Hierarchie & monatliche Ton-/Aggressions-Zeitreihen je Fraktion. Codebase-Cleanup, Dokumentations-Update. |
+| v2.5.0 | DB-Übersicht (Sankey, ERD, Schema-Inspector). Sidebar-Spinner-Optimierungen. |
+| v2.4.0 | Debattenklima-Index (SitzungsKlima) & Redner-Profil (RednerProfil) mit Radar-Charts. |
+| v2.2.0 | Tagesordnungspunkte, Reaktions-Analyse, Redezeit-Gerechtigkeit. |
+| v2.0.0 | Wahlperioden-Vergleich, Multi-WP-Netzwerk-Evolution, Gephi-Export. |
+| v1.0.0 | Aggressions-Radar, Themen-Trend, Interaktions-Netzwerk, Ton-Analyse. |
+        """
+    )
+    
     # ── Tech Stack ─────────────────────────────────────────────────────────────
     st.divider()
     st.subheader("🏗️ Tech Stack")
@@ -546,6 +634,7 @@ python scripts/run_nlp_cli.py --target all --batch-size 64
         )
 
 
+
 def render_aggressions_radar(
     selected_wp: int,
     datum_von: Optional[datetime.date],
@@ -562,21 +651,22 @@ def render_aggressions_radar(
     top_n = col_left.slider("Top N Abgeordnete", 5, 50, 15)
     show_normalized = col_right.toggle("Normiert (pro 100 Wörter)", value=True)
 
-    with get_session() as session:
-        analyzer = AggressionsIndex(session)
-        df_targets = analyzer.top_targets(
-            n=top_n,
-            fraktion_filter=fraktion_filter,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-            wahlperiode=selected_wp,
-        )
-        df_interruptors = analyzer.top_interruptors(
-            n=top_n,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-            wahlperiode=selected_wp,
-        )
+    with st.spinner("Analysiere Aggressions-Daten..."):
+        with get_session() as session:
+            analyzer = AggressionsIndex(session)
+            df_targets = analyzer.top_targets(
+                n=top_n,
+                fraktion_filter=fraktion_filter,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+                wahlperiode=selected_wp,
+            )
+            df_interruptors = analyzer.top_interruptors(
+                n=top_n,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+                wahlperiode=selected_wp,
+            )
 
     if df_targets.empty:
         st.info("Keine Daten für den gewählten Filter. Bitte zuerst den Scraper und die NLP-Pipeline ausführen.")
@@ -631,13 +721,14 @@ def render_themen_trend(selected_wp: int) -> None:
 
     if keywords:
         all_series: list[pd.DataFrame] = []
-        with get_session() as session:
-            analyzer = ThemenKarriere(session)
-            for kw in keywords:
-                df_kw = analyzer.keyword_trend(kw, wahlperiode=selected_wp)
-                if not df_kw.empty:
-                    df_kw["keyword"] = kw
-                    all_series.append(df_kw)
+        with st.spinner("Analysiere Keyword-Trends..."):
+            with get_session() as session:
+                analyzer = ThemenKarriere(session)
+                for kw in keywords:
+                    df_kw = analyzer.keyword_trend(kw, wahlperiode=selected_wp)
+                    if not df_kw.empty:
+                        df_kw["keyword"] = kw
+                        all_series.append(df_kw)
 
         if all_series:
             df_all = pd.concat(all_series, ignore_index=True)
@@ -676,10 +767,11 @@ def render_themen_trend(selected_wp: int) -> None:
     )
 
     if mwp_keyword.strip():
-        with get_session() as session:
-            tk_mwp = ThemenKarriere(session)
-            df_mwp = tk_mwp.multi_wp_keyword_trend(mwp_keyword.strip())
-            df_peaks = tk_mwp.keyword_peak_by_wp(mwp_keyword.strip())
+        with st.spinner("Berechne Multi-Wahlperioden-Trend..."):
+            with get_session() as session:
+                tk_mwp = ThemenKarriere(session)
+                df_mwp = tk_mwp.multi_wp_keyword_trend(mwp_keyword.strip())
+                df_peaks = tk_mwp.keyword_peak_by_wp(mwp_keyword.strip())
 
         if not df_mwp.empty:
             df_mwp = df_mwp.dropna(subset=["datum"])
@@ -722,11 +814,12 @@ def render_themen_trend(selected_wp: int) -> None:
     polarizing_keywords = [k.strip() for k in polarizing_input.split(",") if k.strip()]
 
     if polarizing_keywords:
-        with get_session() as session:
-            tk_polar = ThemenKarriere(session)
-            df_polar = tk_polar.most_polarizing_keywords(
-                polarizing_keywords, wahlperiode=selected_wp
-            )
+        with st.spinner("Analysiere Reizwörter..."):
+            with get_session() as session:
+                tk_polar = ThemenKarriere(session)
+                df_polar = tk_polar.most_polarizing_keywords(
+                    polarizing_keywords, wahlperiode=selected_wp
+                )
 
         if not df_polar.empty:
             fig_polar = px.bar(
@@ -747,10 +840,11 @@ def render_themen_trend(selected_wp: int) -> None:
 
             with st.expander("Details je Schlagwort"):
                 for kw in polarizing_keywords:
-                    with get_session() as session:
-                        df_corr = ThemenKarriere(session).keyword_aggression_correlation(
-                            kw, wahlperiode=selected_wp
-                        )
+                    with st.spinner(f"Lade Korrelation für '{kw}'..."):
+                        with get_session() as session:
+                            df_corr = ThemenKarriere(session).keyword_aggression_correlation(
+                                kw, wahlperiode=selected_wp
+                            )
                     if not df_corr.empty:
                         st.write(f"**{kw}**")
                         st.dataframe(df_corr, width="stretch")
@@ -778,20 +872,21 @@ def render_interaktions_netzwerk(
     score_weighted = st.toggle("Aggressions-gewichtet (−avg Sentiment statt Anzahl)", value=False)
     per_capita = st.toggle("Pro-Kopf-Normalisierung (÷ Fraktionsgröße)", value=False)
 
-    with get_session() as session:
-        netzwerk = InteraktionsNetzwerk(session)
-        matrix = netzwerk.adjacency_matrix(
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-            score_weighted=score_weighted,
-            wahlperiode=selected_wp,
-            per_capita=per_capita,
-        )
-        edge_df = netzwerk.edge_list(
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-            wahlperiode=selected_wp,
-        )
+    with st.spinner("Berechne Interaktions-Matrix..."):
+        with get_session() as session:
+            netzwerk = InteraktionsNetzwerk(session)
+            matrix = netzwerk.adjacency_matrix(
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+                score_weighted=score_weighted,
+                wahlperiode=selected_wp,
+                per_capita=per_capita,
+            )
+            edge_df = netzwerk.edge_list(
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+                wahlperiode=selected_wp,
+            )
 
     if matrix.empty:
         st.info("Keine Netzwerk-Daten vorhanden.")
@@ -863,13 +958,14 @@ def render_interaktions_netzwerk(
         "Aggressions-gewichtet", value=True, key="evo_weighted"
     )
 
-    with get_session() as session:
-        netzwerk_evo = InteraktionsNetzwerk(session)
-        evo_windows = netzwerk_evo.adjacency_matrix_by_window(
-            wahlperiode=selected_wp,
-            window=evo_window,
-            score_weighted=evo_weighted,
-        )
+    with st.spinner("Berechne Netzwerk-Evolution..."):
+        with get_session() as session:
+            netzwerk_evo = InteraktionsNetzwerk(session)
+            evo_windows = netzwerk_evo.adjacency_matrix_by_window(
+                wahlperiode=selected_wp,
+                window=evo_window,
+                score_weighted=evo_weighted,
+            )
 
     if not evo_windows:
         st.info(
@@ -918,7 +1014,6 @@ def render_interaktions_netzwerk(
                 "**Kantenfarbe**: dunkel = mehr Interaktion, hell = weniger."
             )
 
-        import math
         # Build positions using a deterministic sorted order so the layout
         # stays stable as the user moves the timeline slider.
         factions = sorted(
@@ -930,8 +1025,6 @@ def render_interaktions_netzwerk(
                 math.sin(2 * math.pi * i / max(n_fac, 1)))
             for i, f in enumerate(factions)
         }
-
-        import plotly.graph_objects as go
 
         edge_traces = []
         abs_max = max(abs(evo_matrix.values).max(), 1e-9)
@@ -1007,18 +1100,19 @@ def render_ton_analyse(
         "Welche Fraktion fällt durch welchen Ton auf?"
     )
 
-    with get_session() as session:
-        ton_analyzer = TonAnalyse(session)
-        df_ton_frak = ton_analyzer.ton_by_fraktion(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
-        df_ton_trend = ton_analyzer.ton_trend(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
+    with st.spinner("Analysiere Ton-Verteilung..."):
+        with get_session() as session:
+            ton_analyzer = TonAnalyse(session)
+            df_ton_frak = ton_analyzer.ton_by_fraktion(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_ton_trend = ton_analyzer.ton_trend(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
 
     if df_ton_frak.empty:
         st.info(
@@ -1084,19 +1178,20 @@ def render_adressaten_analyse(
 
     top_n_adr = st.slider("Top N Adressaten", 5, 30, 10, key="adr_top_n")
 
-    with get_session() as session:
-        adr_analyzer = AdressatenAnalyse(session)
-        df_top_adr = adr_analyzer.top_adressaten(
-            n=top_n_adr,
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
-        df_frak_targets = adr_analyzer.fraktion_targets_fraktion(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
+    with st.spinner("Analysiere Adressaten..."):
+        with get_session() as session:
+            adr_analyzer = AdressatenAnalyse(session)
+            df_top_adr = adr_analyzer.top_adressaten(
+                n=top_n_adr,
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_frak_targets = adr_analyzer.fraktion_targets_fraktion(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
 
     if df_top_adr.empty:
         st.info(
@@ -1124,7 +1219,7 @@ def render_adressaten_analyse(
             aggfunc="sum",
         )
         fig_heat = px.imshow(
-            np.log1p(pivot),
+            np.log1p(pivot.fillna(0)),
             color_continuous_scale="Reds",
             title="Ziel-Matrix: Störende Fraktion vs. Adressat",
             labels={"x": "Adressat", "y": "Störende Fraktion", "color": "log(1 + Anzahl)"},
@@ -1139,11 +1234,12 @@ def render_scraping_monitor() -> None:
         "Übersicht über den aktuellen Datenbestand und den Fortschritt der NLP-Pipeline."
     )
 
-    with get_session() as session:
-        monitor = ScrapingMonitor(session)
-        df_overview = monitor.overview()
-        df_zr_stats = monitor.zwischenruf_stats()
-        df_recent = monitor.recent_sitzungen(n=25)
+    with st.spinner("Lade Übersichtsdaten..."):
+        with get_session() as session:
+            monitor = ScrapingMonitor(session)
+            df_overview = monitor.overview()
+            df_zr_stats = monitor.zwischenruf_stats()
+            df_recent = monitor.recent_sitzungen(n=25)
 
     if df_overview.empty:
         st.info("Die Datenbank ist leer. Bitte zuerst den Scraper ausführen.")
@@ -1242,13 +1338,14 @@ def render_db_uebersicht() -> None:
         db_size_str = "in-memory / unbekannt"
 
     # ── Zeilenzähler ──────────────────────────────────────────────────────────
-    with get_session() as session:
-        counts = {
-            "Sitzungen":     session.execute(select(func.count()).select_from(Sitzung)).scalar() or 0,
-            "Redner":        session.execute(select(func.count()).select_from(Redner)).scalar() or 0,
-            "Reden":         session.execute(select(func.count()).select_from(Rede)).scalar() or 0,
-            "Zwischenrufe":  session.execute(select(func.count()).select_from(Zwischenruf)).scalar() or 0,
-        }
+    with st.spinner("Lade Datenbankstatistiken..."):
+        with get_session() as session:
+            counts = {
+                "Sitzungen":     session.execute(select(func.count()).select_from(Sitzung)).scalar() or 0,
+                "Redner":        session.execute(select(func.count()).select_from(Redner)).scalar() or 0,
+                "Reden":         session.execute(select(func.count()).select_from(Rede)).scalar() or 0,
+                "Zwischenrufe":  session.execute(select(func.count()).select_from(Zwischenruf)).scalar() or 0,
+            }
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("📁 DB-Größe", db_size_str)
@@ -1278,7 +1375,6 @@ def render_db_uebersicht() -> None:
             ("Rede",     "Zwischenruf",  counts["Zwischenrufe"]),
         ]
 
-        import math
         _src, _tgt, _val, _lbl = [], [], [], []
         for src, tgt, val in _links:
             _src.append(_node_idx[src])
@@ -1443,11 +1539,12 @@ def render_wahlperioden_vergleich() -> None:
         "Die Daten für alle Legislaturperioden in der Datenbank werden gemeinsam ausgewertet."
     )
 
-    with get_session() as session:
-        wp_analyzer = WahlperiodenVergleich(session)
-        df_agg_wp = wp_analyzer.aggression_by_wp()
-        df_ton_wp = wp_analyzer.ton_by_wp()
-        df_activity_wp = wp_analyzer.activity_by_wp()
+    with st.spinner("Vergleiche Wahlperioden..."):
+        with get_session() as session:
+            wp_analyzer = WahlperiodenVergleich(session)
+            df_agg_wp = wp_analyzer.aggression_by_wp()
+            df_ton_wp = wp_analyzer.ton_by_wp()
+            df_activity_wp = wp_analyzer.activity_by_wp()
 
     if df_agg_wp.empty and df_activity_wp.empty and df_ton_wp.empty:
         st.info(
@@ -1557,35 +1654,59 @@ def render_top_analyse(selected_wp: int) -> None:
         "Mindestanzahl Reden (Qualitätsfilter)", 1, 20, 3, key="min_reden_top"
     )
 
-    with get_session() as session:
-        top_analyzer = TOPAnalyse(session)
-        df_top_agg = top_analyzer.aggression_by_top(
-            n=top_n_top, wahlperiode=selected_wp, min_reden=min_reden_top
-        )
-        df_top_kat = top_analyzer.kategorie_by_top(
-            n=top_n_top, wahlperiode=selected_wp, min_reden=min_reden_top
-        )
+    with st.spinner("Analysiere Tagesordnungspunkte..."):
+        with get_session() as session:
+            top_analyzer = TOPAnalyse(session)
+            df_top_agg = top_analyzer.aggression_by_top(
+                n=top_n_top, wahlperiode=selected_wp, min_reden=min_reden_top
+            )
+            df_top_kat = top_analyzer.kategorie_by_top(
+                n=top_n_top, wahlperiode=selected_wp, min_reden=min_reden_top
+            )
 
     if df_top_agg.empty:
         st.info(
             "Keine Tagesordnungspunkt-Daten vorhanden. "
-            "Bitte zuerst Protokolle mit dem Scraper importieren und die NLP-Pipeline ausführen."
+            "Bitte zuerst Protokolle mit dem Scraper importieren."
         )
     else:
-        fig_top_agg = px.bar(
-            df_top_agg,
-            x="avg_aggression",
-            y="tagesordnungspunkt",
-            orientation="h",
-            color="anteil_negativ_pct",
-            color_continuous_scale="Reds",
-            title=f"Top {top_n_top} Reizthemen nach Aggressions-Score",
-            labels={
-                "avg_aggression": "Ø Aggressions-Score",
-                "tagesordnungspunkt": "Tagesordnungspunkt",
-                "anteil_negativ_pct": "Anteil negativ (%)",
-            },
-        )
+        has_nlp_scores = df_top_agg["avg_aggression"].notna().any()
+        if has_nlp_scores:
+            fig_top_agg = px.bar(
+                df_top_agg,
+                x="avg_aggression",
+                y="tagesordnungspunkt",
+                orientation="h",
+                color="anteil_negativ_pct",
+                color_continuous_scale="Reds",
+                title=f"Top {top_n_top} Reizthemen nach Aggressions-Score",
+                labels={
+                    "avg_aggression": "Ø Aggressions-Score",
+                    "tagesordnungspunkt": "Tagesordnungspunkt",
+                    "anteil_negativ_pct": "Anteil negativ (%)",
+                },
+            )
+        else:
+            st.info(
+                "ℹ️ Keine Sentiment-Scores für Zwischenrufe vorhanden. "
+                "Bitte die NLP-Pipeline ausführen (`openparlament-nlp` oder "
+                "`python scripts/run_nlp_cli.py`) um Aggressions-Scores zu berechnen. "
+                "Zeige stattdessen nach Gesamt-Zwischenrufen sortiert."
+            )
+            df_top_agg_sorted = df_top_agg.sort_values(
+                "gesamt_zwischenrufe", ascending=False
+            )
+            fig_top_agg = px.bar(
+                df_top_agg_sorted,
+                x="gesamt_zwischenrufe",
+                y="tagesordnungspunkt",
+                orientation="h",
+                title=f"Top {top_n_top} Tagesordnungspunkte nach Anzahl Zwischenrufe",
+                labels={
+                    "gesamt_zwischenrufe": "Anzahl Zwischenrufe",
+                    "tagesordnungspunkt": "Tagesordnungspunkt",
+                },
+            )
         fig_top_agg.update_layout(yaxis={"autorange": "reversed"})
         st.plotly_chart(fig_top_agg, width="stretch")
 
@@ -1630,25 +1751,26 @@ def render_reaktions_analyse(
     )
     reaktion_mode = "given" if mode_toggle.startswith("Gegeben") else "received"
 
-    with get_session() as session:
-        kat_analyzer = KategorieAnalyse(session)
-        df_kat_frak = kat_analyzer.kategorie_by_fraktion(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-            mode=reaktion_mode,
-        )
-        df_civility = kat_analyzer.beifall_widerspruch_ratio(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
-        df_lachen = kat_analyzer.lachen_by_redner(
-            n=15,
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
+    with st.spinner("Analysiere Reaktionen..."):
+        with get_session() as session:
+            kat_analyzer = KategorieAnalyse(session)
+            df_kat_frak = kat_analyzer.kategorie_by_fraktion(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+                mode=reaktion_mode,
+            )
+            df_civility = kat_analyzer.beifall_widerspruch_ratio(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_lachen = kat_analyzer.lachen_by_redner(
+                n=15,
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
 
     if df_kat_frak.empty:
         st.info(
@@ -1680,7 +1802,7 @@ def render_reaktions_analyse(
             values="civility_index",
             aggfunc="mean",
         )
-        log_pivot_civ = np.log1p(pivot_civ)
+        log_pivot_civ = np.log1p(pivot_civ.fillna(0))
         fig_civ = px.imshow(
             log_pivot_civ,
             color_continuous_scale="RdYlGn",
@@ -1729,20 +1851,21 @@ def render_redezeit_analyse(
         "Der Fairness-Index vergleicht den Wort-Anteil (NICHT DIE REDEZEIT!) jeder Fraktion mit ihrem Sitz-Anteil."
     )
 
-    with get_session() as session:
-        rz_analyzer = RedeZeitAnalyse(session)
-        df_fairness = rz_analyzer.fairness_index(wahlperiode=selected_wp)
-        df_verbose = rz_analyzer.top_redselige_redner(
-            n=20,
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
-        df_scatter = rz_analyzer.wortanzahl_vs_zwischenrufe(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
+    with st.spinner("Analysiere Redezeiten..."):
+        with get_session() as session:
+            rz_analyzer = RedeZeitAnalyse(session)
+            df_fairness = rz_analyzer.fairness_index(wahlperiode=selected_wp)
+            df_verbose = rz_analyzer.top_redselige_redner(
+                n=20,
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_scatter = rz_analyzer.wortanzahl_vs_zwischenrufe(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
 
     if df_fairness.empty:
         st.info(
@@ -1826,14 +1949,15 @@ def render_debattenklima(
         "Unterbrechungsdichte und Unruhe-Anteil zu einem Composite-Score."
     )
 
-    with get_session() as session:
-        klima_analyzer = SitzungsKlima(session)
-        df_klima = klima_analyzer.klima_per_sitzung(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
-        df_hottest = klima_analyzer.hottest_sessions(n=15, wahlperiode=selected_wp)
+    with st.spinner("Berechne Debattenklima-Index..."):
+        with get_session() as session:
+            klima_analyzer = SitzungsKlima(session)
+            df_klima = klima_analyzer.klima_per_sitzung(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_hottest = klima_analyzer.hottest_sessions(n=15, wahlperiode=selected_wp)
 
     if df_klima.empty:
         st.info(
@@ -1885,33 +2009,33 @@ def render_redner_profil(
         "Basiert auf den **Ton-Scores** (JSON) die der ToneClassifier für jede Rede berechnet hat."
     )
 
-    with get_session() as session:
-        rp_analyzer = RednerProfil(session)
-        df_rp_faction = rp_analyzer.faction_profile(
-            wahlperiode=selected_wp,
-            datum_von=datum_von,
-            datum_bis=datum_bis,
-        )
+    with st.spinner("Lade Redner-Profile..."):
+        with get_session() as session:
+            rp_analyzer = RednerProfil(session)
+            df_rp_faction = rp_analyzer.faction_profile(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
 
-        # Build speaker selector list – filtered to current wahlperiode/dates
-        # so the dropdown only contains MPs who actually have speeches in scope.
-        # Query starts from Sitzung (filtered first) to reduce rows early.
-        from sqlalchemy import select as sa_select
-        speaker_stmt = (
-            sa_select(Redner.redner_id, Redner.vorname, Redner.nachname, Redner.fraktion)
-            .distinct()
-            .select_from(Sitzung)
-            .join(Rede, Rede.sitzung_id == Sitzung.sitzungs_id)
-            .join(Redner, Redner.redner_id == Rede.redner_id)
-            .order_by(Redner.nachname)
-        )
-        if selected_wp:
-            speaker_stmt = speaker_stmt.where(Sitzung.wahlperiode == selected_wp)
-        if datum_von:
-            speaker_stmt = speaker_stmt.where(Sitzung.datum >= datum_von)
-        if datum_bis:
-            speaker_stmt = speaker_stmt.where(Sitzung.datum <= datum_bis)
-        redner_rows = session.execute(speaker_stmt).fetchall()
+            # Build speaker selector list – filtered to current wahlperiode/dates
+            # so the dropdown only contains MPs who actually have speeches in scope.
+            # Query starts from Sitzung (filtered first) to reduce rows early.
+            speaker_stmt = (
+                select(Redner.redner_id, Redner.vorname, Redner.nachname, Redner.fraktion)
+                .distinct()
+                .select_from(Sitzung)
+                .join(Rede, Rede.sitzung_id == Sitzung.sitzungs_id)
+                .join(Redner, Redner.redner_id == Rede.redner_id)
+                .order_by(Redner.nachname)
+            )
+            if selected_wp:
+                speaker_stmt = speaker_stmt.where(Sitzung.wahlperiode == selected_wp)
+            if datum_von:
+                speaker_stmt = speaker_stmt.where(Sitzung.datum >= datum_von)
+            if datum_bis:
+                speaker_stmt = speaker_stmt.where(Sitzung.datum <= datum_bis)
+            redner_rows = session.execute(speaker_stmt).fetchall()
 
     redner_options = {
         f"{r[1]} {r[2]} ({r[3] or 'unbekannt'}) [ID: {r[0]}]": r[0]
@@ -1920,28 +2044,68 @@ def render_redner_profil(
 
     if not df_rp_faction.empty:
         st.subheader("Rhetorisches Profil je Fraktion")
-        fig_fp = px.bar(
-            df_rp_faction.melt(
-                id_vars="fraktion",
-                value_vars=["Aggression", "Sarkasmus", "Humor", "Neutral"],
-                var_name="Ton",
-                value_name="Ø Wahrscheinlichkeit",
-            ),
-            x="fraktion",
-            y="Ø Wahrscheinlichkeit",
-            color="Ton",
-            barmode="stack",
-            title="Ø Ton-Profil je Fraktion (normiert auf Reden mit tone_scores)",
-            labels={"fraktion": "Fraktion"},
-            color_discrete_map={
-                "Aggression": "#d62728",
-                "Sarkasmus": "#ff7f0e",
-                "Humor": "#2ca02c",
-                "Neutral": "#aec7e8",
-            },
+
+        # ── Chart-type toggle ─────────────────────────────────────────────────
+        _chart_mode = st.radio(
+            "Diagramm-Typ",
+            ["📊 Balkendiagramm", "🕸️ Netzdiagramm (Radar)"],
+            horizontal=True,
+            key="rp_faction_chart_mode",
         )
-        fig_fp.update_layout(xaxis_tickangle=-30)
-        st.plotly_chart(fig_fp, width="stretch")
+
+        _tone_labels = ["Aggression", "Sarkasmus", "Humor", "Neutral"]
+        _tone_colors = {
+            "Aggression": "#d62728",
+            "Sarkasmus":  "#ff7f0e",
+            "Humor":      "#2ca02c",
+            "Neutral":    "#aec7e8",
+        }
+
+        if _chart_mode == "📊 Balkendiagramm":
+            fig_fp = px.bar(
+                df_rp_faction.melt(
+                    id_vars="fraktion",
+                    value_vars=_tone_labels,
+                    var_name="Ton",
+                    value_name="Ø Wahrscheinlichkeit",
+                ),
+                x="fraktion",
+                y="Ø Wahrscheinlichkeit",
+                color="Ton",
+                barmode="stack",
+                title="Ø Ton-Profil je Fraktion (normiert auf Reden mit tone_scores)",
+                labels={"fraktion": "Fraktion"},
+                color_discrete_map=_tone_colors,
+            )
+            fig_fp.update_layout(xaxis_tickangle=-30)
+            st.plotly_chart(fig_fp, width="stretch")
+        else:
+            # ── Radar / Spider chart – one trace per faction ───────────────────
+            _labels_closed = _tone_labels + [_tone_labels[0]]
+            fig_fp = go.Figure()
+            for _, row in df_rp_faction.iterrows():
+                vals = [row[lbl] for lbl in _tone_labels]
+                vals_closed = vals + [vals[0]]
+                fig_fp.add_trace(go.Scatterpolar(
+                    r=vals_closed,
+                    theta=_labels_closed,
+                    fill="toself",
+                    name=str(row["fraktion"]),
+                    opacity=0.75,
+                ))
+            fig_fp.update_layout(
+                polar=dict(
+                    radialaxis=dict(
+                        visible=True,
+                        range=[0, 1],
+                        tickformat=".2f",
+                    ),
+                ),
+                title="Ø Ton-Profil je Fraktion — Netzdiagramm",
+                legend=dict(orientation="h"),
+                height=500,
+            )
+            st.plotly_chart(fig_fp, width="stretch")
 
     col_tone, _ = st.columns(2)
 
@@ -1951,13 +2115,14 @@ def render_redner_profil(
         key="rp_tone_label",
     )
 
-    with get_session() as session:
-        rp_analyzer2 = RednerProfil(session)
-        df_rp_top = rp_analyzer2.top_speakers_by_tone(
-            ton_label=tone_label_sel,
-            n=15,
-            wahlperiode=selected_wp,
-        )
+    with st.spinner(f"Lade Top-Redner nach {tone_label_sel}..."):
+        with get_session() as session:
+            rp_analyzer2 = RednerProfil(session)
+            df_rp_top = rp_analyzer2.top_speakers_by_tone(
+                ton_label=tone_label_sel,
+                n=15,
+                wahlperiode=selected_wp,
+            )
 
     if not df_rp_top.empty:
         st.subheader(f"Top 15 Abgeordnete nach Ø {tone_label_sel}-Wahrscheinlichkeit")
@@ -2001,24 +2166,33 @@ def render_redner_profil(
 
             with col_select:
                 if filtered_options:
+                    # Guard against stale session state: if the previously
+                    # selected name is no longer in the current filtered list
+                    # (e.g. because the Wahlperiode filter changed), reset it
+                    # to the first valid option to avoid a KeyError below.
+                    if st.session_state.get("rp_redner_sel") not in filtered_options:
+                        st.session_state["rp_redner_sel"] = filtered_options[0]
                     selected_redner_name = st.selectbox(
                         "Abgeordnete/r",
                         filtered_options,
                         key="rp_redner_sel"
                     )
-                    selected_redner_id = redner_options[selected_redner_name]
+                    selected_redner_id = redner_options.get(selected_redner_name)
+                    if selected_redner_id is None:
+                        st.warning("Abgeordnete/r nicht gefunden. Bitte erneut auswählen.")
+                        return
                 else:
                     st.warning("Kein passender Abgeordneter gefunden.")
                     return
 
-        with get_session() as session:
-            rp_analyzer3 = RednerProfil(session)
-            df_profile = rp_analyzer3.speaker_profile(
-                redner_id=selected_redner_id, wahlperiode=selected_wp
-            )
+        with st.spinner("Lade Redner-Radar-Profil..."):
+            with get_session() as session:
+                rp_analyzer3 = RednerProfil(session)
+                df_profile = rp_analyzer3.speaker_profile(
+                    redner_id=selected_redner_id, wahlperiode=selected_wp
+                )
 
         if not df_profile.empty:
-            import plotly.graph_objects as go
             labels = df_profile["label"].tolist()
             values = df_profile["avg_probability"].tolist()
             # Close the polygon
@@ -2042,6 +2216,441 @@ def render_redner_profil(
                 "Keine tone_scores für diesen Abgeordneten vorhanden. "
                 "Bitte zuerst die NLP-Pipeline (ToneClassifier) auf Reden ausführen."
             )
+
+
+def render_redner_vergleich(
+    selected_wp: int,
+    datum_von: Optional[datetime.date],
+    datum_bis: Optional[datetime.date],
+) -> None:
+    st.header("👥 Redner-Vergleich")
+    st.markdown(
+        "Vergleiche das **rhetorische Profil zweier Abgeordneter** direkt nebeneinander: "
+        "Ton-Fingerabdruck, Aggressions-Exposition und Redeaktivität auf einen Blick."
+    )
+
+    with st.spinner("Lade Abgeordneten-Liste..."):
+        with get_session() as session:
+            stmt = (
+                select(Redner.redner_id, Redner.vorname, Redner.nachname, Redner.fraktion)
+                .distinct()
+                .select_from(Sitzung)
+                .join(Rede, Rede.sitzung_id == Sitzung.sitzungs_id)
+                .join(Redner, Redner.redner_id == Rede.redner_id)
+                .order_by(Redner.nachname, Redner.vorname)
+            )
+            if selected_wp:
+                stmt = stmt.where(Sitzung.wahlperiode == selected_wp)
+            if datum_von is not None:
+                stmt = stmt.where(Sitzung.datum >= datum_von)
+            if datum_bis is not None:
+                stmt = stmt.where(Sitzung.datum <= datum_bis)
+            redner_rows = session.execute(stmt).fetchall()
+
+    if not redner_rows:
+        st.info("Keine Abgeordneten mit Reden im ausgewählten Zeitraum vorhanden.")
+        return
+
+    redner_options = {
+        f"{r[2]}, {r[1]} ({r[3] or '–'}) [ID: {r[0]}]": r[0] for r in redner_rows
+    }
+    redner_names = list(redner_options.keys())
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        sel_a = st.selectbox("Abgeordnete/r A", redner_names, key="rv_sel_a")
+    with col_b:
+        default_b_idx = min(1, len(redner_names) - 1)
+        sel_b = st.selectbox("Abgeordnete/r B", redner_names, index=default_b_idx, key="rv_sel_b")
+
+    id_a = redner_options[sel_a]
+    id_b = redner_options[sel_b]
+
+    if id_a == id_b:
+        st.warning(
+            "Bitte zwei **verschiedene** Abgeordnete auswählen, um einen Vergleich anzuzeigen."
+        )
+        return
+
+
+        with get_session() as session:
+            rv = RednerVergleich(session)
+            df_tone = rv.compare_tone_profiles(
+                id_a, id_b, wahlperiode=selected_wp,
+                datum_von=datum_von, datum_bis=datum_bis,
+            )
+            df_stats = rv.compare_speech_stats(
+                id_a, id_b, wahlperiode=selected_wp,
+                datum_von=datum_von, datum_bis=datum_bis,
+            )
+            df_agg = rv.compare_aggression(
+                id_a, id_b, wahlperiode=selected_wp,
+                datum_von=datum_von, datum_bis=datum_bis,
+            )
+
+    # ── Overlapping radar chart ────────────────────────────────────────────────
+    st.subheader("🎯 Ton-Profil-Vergleich (Radar)")
+    if not df_tone.empty:
+        labels = df_tone["label"].tolist()
+        vals_a = df_tone["speaker_a"].tolist()
+        vals_b = df_tone["speaker_b"].tolist()
+        labels_c = labels + [labels[0]]
+        vals_a_c = vals_a + [vals_a[0]]
+        vals_b_c = vals_b + [vals_b[0]]
+
+        fig_radar = go.Figure()
+        fig_radar.add_trace(go.Scatterpolar(
+            r=vals_a_c, theta=labels_c, fill="toself",
+            name=sel_a.split(",")[0], line_color="#3B82F6",
+            fillcolor="rgba(59,130,246,0.20)",
+        ))
+        fig_radar.add_trace(go.Scatterpolar(
+            r=vals_b_c, theta=labels_c, fill="toself",
+            name=sel_b.split(",")[0], line_color="#F97316",
+            fillcolor="rgba(249,115,22,0.20)",
+        ))
+        fig_radar.update_layout(
+            polar={"radialaxis": {"visible": True, "range": [0, 1]}},
+            legend={"orientation": "h"},
+            title="Ø Ton-Wahrscheinlichkeit",
+            height=380,
+        )
+        st.plotly_chart(fig_radar, width="stretch")
+    else:
+        st.info("Keine Ton-Score-Daten verfügbar. Bitte NLP-Pipeline ausführen.")
+
+    st.divider()
+
+    # ── Diverging bar: delta (A − B) per tone label ────────────────────────────
+    st.subheader("📊 Ton-Delta (A − B)")
+    if not df_tone.empty and df_tone["speaker_a"].sum() + df_tone["speaker_b"].sum() > 0:
+        df_tone_delta = df_tone.copy()
+        df_tone_delta["delta"] = (df_tone_delta["speaker_a"] - df_tone_delta["speaker_b"]).round(4)
+        df_tone_delta["farbe"] = df_tone_delta["delta"].apply(lambda v: "#3B82F6" if v >= 0 else "#F97316")
+        fig_delta = go.Figure(go.Bar(
+            x=df_tone_delta["label"],
+            y=df_tone_delta["delta"],
+            marker_color=df_tone_delta["farbe"].tolist(),
+            text=df_tone_delta["delta"].apply(lambda v: f"{v:+.3f}"),
+            textposition="outside",
+        ))
+        fig_delta.add_hline(y=0, line_dash="dash", line_color="gray")
+        fig_delta.update_layout(
+            title=f"Ton-Delta: {sel_a.split(',')[0]} − {sel_b.split(',')[0]}",
+            xaxis_title="Ton-Label",
+            yaxis_title="Delta (positiv = A höher)",
+            height=320,
+        )
+        st.plotly_chart(fig_delta, width="stretch")
+
+    st.divider()
+
+    # ── Side-by-side grouped bars: speech stats & aggression ──────────────────
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        st.subheader("🎤 Rede-Aktivität")
+        if not df_stats.empty:
+            fig_stats = px.bar(
+                df_stats.melt(id_vars="Metrik", var_name="Sprecher", value_name="Wert"),
+                x="Metrik",
+                y="Wert",
+                color="Sprecher",
+                barmode="group",
+                color_discrete_map={
+                    "speaker_a": "#3B82F6",
+                    "speaker_b": "#F97316",
+                },
+                labels={"Wert": "Wert", "Metrik": "Kennzahl"},
+                title="Rede-Kennzahlen im Vergleich",
+            )
+            fig_stats.update_layout(
+                xaxis_tickangle=-25,
+                legend={"title": "Sprecher", "orientation": "h"},
+            )
+            st.plotly_chart(fig_stats, width="stretch")
+        else:
+            st.info("Keine Rede-Daten für den gewählten Filter.")
+
+    with col_right:
+        st.subheader("⚡ Aggressions-Exposition")
+        if not df_agg.empty:
+            fig_agg = px.bar(
+                df_agg.melt(id_vars="Metrik", var_name="Sprecher", value_name="Wert"),
+                x="Metrik",
+                y="Wert",
+                color="Sprecher",
+                barmode="group",
+                color_discrete_map={
+                    "speaker_a": "#3B82F6",
+                    "speaker_b": "#F97316",
+                },
+                labels={"Wert": "Wert", "Metrik": "Kennzahl"},
+                title="Erhaltene Zwischenrufe im Vergleich",
+            )
+            fig_agg.update_layout(
+                xaxis_tickangle=-25,
+                legend={"title": "Sprecher", "orientation": "h"},
+            )
+            st.plotly_chart(fig_agg, width="stretch")
+        else:
+            st.info("Keine Zwischenruf-Daten für den gewählten Filter.")
+
+    # ── Raw comparison table ───────────────────────────────────────────────────
+    # Build unique display labels: "Nachname, Vorname" (strip the [ID: N] suffix)
+    _label_a = sel_a.split(" [ID:")[0]
+    _label_b = sel_b.split(" [ID:")[0]
+    # If both labels are still identical (extremely rare), append the ID to disambiguate
+    if _label_a == _label_b:
+        _label_a = sel_a
+        _label_b = sel_b
+    with st.expander("📋 Detailtabellen"):
+        tab1, tab2, tab3 = st.tabs(["Ton-Profile", "Redeaktivität", "Aggression"])
+        with tab1:
+            df_tone_disp = df_tone.rename(
+                columns={"label": "Ton", "speaker_a": _label_a, "speaker_b": _label_b}
+            )
+            st.dataframe(df_tone_disp, hide_index=True, width="stretch")
+        with tab2:
+            df_stats_disp = df_stats.rename(
+                columns={"speaker_a": _label_a, "speaker_b": _label_b}
+            )
+            st.dataframe(df_stats_disp, hide_index=True, width="stretch")
+        with tab3:
+            df_agg_disp = df_agg.rename(
+                columns={"speaker_a": _label_a, "speaker_b": _label_b}
+            )
+            st.dataframe(df_agg_disp, hide_index=True, width="stretch")
+
+
+def render_fraktions_dynamik(
+    selected_wp: int,
+    datum_von: Optional[datetime.date],
+    datum_bis: Optional[datetime.date],
+) -> None:
+    st.header("📡 Fraktions-Dynamik")
+    st.markdown(
+        "Wie entwickeln sich **Ton und Aggressivität** der Fraktionen über die Zeit? "
+        "Das Sunburst-Diagramm zeigt die hierarchische Ton-Verteilung, "
+        "die Zeitreihen verfolgen die monatliche Entwicklung je Fraktion."
+    )
+
+    with st.spinner("Berechne Fraktions-Dynamik..."):
+        with get_session() as session:
+            fd = FraktionsDynamik(session)
+            df_sun = fd.sunburst_data(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_tone_tl = fd.tone_timeline(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+            df_agg_tl = fd.aggression_timeline(
+                wahlperiode=selected_wp,
+                datum_von=datum_von,
+                datum_bis=datum_bis,
+            )
+
+
+    # ── Per-faction radar charts ──────────────────────────────────────────────
+    st.subheader("🕸️ Ton-Profil je Fraktion (Radar)")
+    st.markdown(
+        "Jedes Netzdiagramm zeigt das durchschnittliche Ton-Profil einer Fraktion "
+        "basierend auf den Zwischenrufen im gewählten Zeitraum. "
+        "So lassen sich die charakteristischen Muster der Fraktionen direkt vergleichen."
+    )
+    if df_sun.empty:
+        st.info(
+            "Keine Ton-Daten vorhanden. Bitte zuerst die NLP-Pipeline (ToneClassifier) ausführen."
+        )
+    else:
+        _tone_labels_radar = ["Aggression", "Sarkasmus", "Humor", "Neutral"]
+        _tone_colors_radar = {
+            "Aggression": "#d62728",
+            "Sarkasmus":  "#ff7f0e",
+            "Humor":      "#2ca02c",
+            "Neutral":    "#aec7e8",
+        }
+        # Pivot: rows = fraktion, columns = ton_label, values = normalised share
+        df_pivot = (
+            df_sun
+            .groupby(["fraktion", "ton_label"])["anzahl"]
+            .sum()
+            .unstack(fill_value=0)
+        )
+        # Ensure all four labels are present
+        for _lbl in _tone_labels_radar:
+            if _lbl not in df_pivot.columns:
+                df_pivot[_lbl] = 0
+        df_pivot = df_pivot[_tone_labels_radar]
+        # Normalise each faction row to [0, 1] so radars are comparable
+        row_totals = df_pivot.sum(axis=1).replace(0, 1)
+        df_norm = df_pivot.div(row_totals, axis=0)
+
+        # Only keep the 'Fraktionen auswählen' multiselect with preferred default
+        fraktionen_radar_all = sorted(df_norm.index.tolist())
+        preferred_fraktionen = [
+            "AfD",
+            "Bündnis 90/Die Grünen",
+            "FDP",
+            "Die Linke",
+            "SPD",
+            "CDU/CSU",
+            "BSW",
+        ]
+        default_fraktionen_radar = [f for f in preferred_fraktionen if f in fraktionen_radar_all]
+        if not default_fraktionen_radar:
+            default_fraktionen_radar = fraktionen_radar_all[:4] if len(fraktionen_radar_all) >= 4 else fraktionen_radar_all
+        sel_frak_radar = st.multiselect(
+            "Fraktionen auswählen",
+            fraktionen_radar_all,
+            default=default_fraktionen_radar,
+            key="fd_radar_frak_sel",
+        )
+
+        _ncols = min(3, len(sel_frak_radar))
+        _radar_cols = st.columns(_ncols) if _ncols > 0 else []
+        _labels_closed = _tone_labels_radar + [_tone_labels_radar[0]]
+        for _i, _frak in enumerate(sel_frak_radar):
+            _vals = [float(df_norm.loc[_frak, _lbl]) for _lbl in _tone_labels_radar]
+            _vals_closed = _vals + [_vals[0]]
+            _color = list(_tone_colors_radar.values())[_i % len(_tone_colors_radar)]
+            _fig_hero = go.Figure()
+            _fig_hero.add_trace(go.Scatterpolar(
+                r=_vals_closed,
+                theta=_labels_closed,
+                fill="toself",
+                name=_frak,
+                line_color=_color,
+                fillcolor=_color,
+                opacity=0.55,
+            ))
+            _fig_hero.update_layout(
+                polar=dict(
+                    radialaxis=dict(
+                        visible=True,
+                        range=[0, 1],
+                        tickformat=".0%",
+                        showticklabels=True,
+                    ),
+                ),
+                title=dict(text=_frak, x=0.5, xanchor="center"),
+                showlegend=False,
+                height=300,
+                margin=dict(l=40, r=40, t=50, b=20),
+            )
+            _col = _radar_cols[_i % _ncols]
+            _col.plotly_chart(_fig_hero, use_container_width=True)
+
+    st.divider()
+
+    # ── Stacked area chart – tone timeline per faction ────────────────────────
+    st.subheader("📈 Ton-Timeline je Fraktion (gestapelte Fläche)")
+    if not df_tone_tl.empty:
+        fraktionen_avail = sorted(df_tone_tl["fraktion"].dropna().unique().tolist())
+        # Only keep the 'Fraktionen auswählen' multiselect with preferred default
+        preferred_fraktionen = [
+            "AfD",
+            "Bündnis 90/Die Grünen",
+            "FDP",
+            "Die Linke",
+            "SPD",
+            "CDU/CSU",
+            "BSW",
+        ]
+        default_fraktionen = [f for f in preferred_fraktionen if f in fraktionen_avail]
+        if not default_fraktionen:
+            default_fraktionen = fraktionen_avail[:4] if len(fraktionen_avail) >= 4 else fraktionen_avail
+        sel_frak = st.multiselect(
+            "Fraktionen auswählen",
+            fraktionen_avail,
+            default=default_fraktionen,
+            key="fd_frak_sel",
+        )
+        tone_sel = st.selectbox(
+            "Ton-Label",
+            ["Aggression", "Sarkasmus", "Humor", "Neutral"],
+            key="fd_tone_sel",
+        )
+        if sel_frak:
+            df_flt = df_tone_tl[
+                (df_tone_tl["fraktion"].isin(sel_frak))
+                & (df_tone_tl["ton_label"] == tone_sel)
+            ].copy()
+            if not df_flt.empty:
+                fig_area = px.area(
+                    df_flt,
+                    x="monat",
+                    y="anzahl",
+                    color="fraktion",
+                    title=f"Monatliche {tone_sel}-Zwischenrufe je Fraktion",
+                    labels={
+                        "monat": "Monat",
+                        "anzahl": f"Anzahl ({tone_sel})",
+                        "fraktion": "Fraktion",
+                    },
+                )
+                fig_area.update_xaxes(tickangle=-45, nticks=16)
+                st.plotly_chart(fig_area, width="stretch")
+            else:
+                st.info(f"Keine {tone_sel}-Daten für die gewählten Fraktionen.")
+        else:
+            st.info("Bitte mindestens eine Fraktion auswählen.")
+    else:
+        st.info("Keine Ton-Timeline-Daten vorhanden.")
+
+    st.divider()
+
+    # ── Line chart – aggression timeline per faction ───────────────────────────
+    st.subheader("🌡️ Aggressions-Timeline je Fraktion")
+    st.markdown(
+        "Monatlicher Durchschnitt des **Aggressions-Scores** "
+        "(−Ø Sentiment der Zwischenrufe) je unterbrechender Fraktion."
+    )
+    if not df_agg_tl.empty:
+        frak_agg = sorted(df_agg_tl["fraktion"].dropna().unique().tolist())
+        preferred_fraktionen = [
+            "AfD",
+            "Bündnis 90/Die Grünen",
+            "FDP",
+            "Die Linke",
+            "SPD",
+            "CDU/CSU",
+            "BSW",
+        ]
+        default_frak_agg = [f for f in preferred_fraktionen if f in frak_agg]
+        if not default_frak_agg:
+            default_frak_agg = frak_agg[:4] if len(frak_agg) >= 4 else frak_agg
+        sel_frak_agg = st.multiselect(
+            "Fraktionen (Aggression)",
+            frak_agg,
+            default=default_frak_agg,
+            key="fd_agg_frak_sel",
+        )
+        if sel_frak_agg:
+            df_agg_flt = df_agg_tl[df_agg_tl["fraktion"].isin(sel_frak_agg)]
+            fig_agg_tl = px.line(
+                df_agg_flt,
+                x="monat",
+                y="avg_aggression",
+                color="fraktion",
+                markers=True,
+                title="Monatlicher Aggressions-Score je Fraktion",
+                labels={
+                    "monat": "Monat",
+                    "avg_aggression": "Ø Aggressions-Score",
+                    "fraktion": "Fraktion",
+                },
+            )
+            fig_agg_tl.update_xaxes(tickangle=-45, nticks=16)
+            st.plotly_chart(fig_agg_tl, width="stretch")
+        else:
+            st.info("Bitte mindestens eine Fraktion auswählen.")
+    else:
+        st.info("Keine Aggressions-Timeline-Daten vorhanden.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2117,6 +2726,14 @@ def _page_redner_profil() -> None:
     render_redner_profil(selected_wp, datum_von, datum_bis)
 
 
+def _page_redner_vergleich() -> None:
+    render_redner_vergleich(selected_wp, datum_von, datum_bis)
+
+
+def _page_fraktions_dynamik() -> None:
+    render_fraktions_dynamik(selected_wp, datum_von, datum_bis)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Native Streamlit navigation  (st.navigation / st.Page, requires ≥ 1.36)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2135,8 +2752,10 @@ _P_REAK    = st.Page(_page_reaktions_analyse,      title="Reaktions-Analyse",   
 _P_REDEN   = st.Page(_page_redezeit_gerechtigkeit, title="Redezeit-Gerechtigkeit",  icon="⏱️")
 _P_KLIMA   = st.Page(_page_debattenklima,          title="Debattenklima-Index",     icon="🌡️")
 _P_PROFIL  = st.Page(_page_redner_profil,          title="Redner-Profil",           icon="🎤")
+_P_VERGL   = st.Page(_page_redner_vergleich,       title="Redner-Vergleich",        icon="👥")
 _P_WP      = st.Page(_page_wahlperioden_vergleich, title="Wahlperioden-Vergleich",  icon="⚖️")
 
+_P_FRAKDYN = st.Page(_page_fraktions_dynamik,      title="Fraktions-Dynamik",       icon="📡")
 _P_MONITOR = st.Page(_page_scraping_monitor,       title="Scraping-Monitor",        icon="📊")
 _P_DB      = st.Page(_page_db_uebersicht,          title="DB-Übersicht",            icon="🗄️")
 
@@ -2155,6 +2774,8 @@ _PAGE_REGISTRY.update(
         "redezeit-gerechtigkeit": _P_REDEN,
         "debattenklima":          _P_KLIMA,
         "redner-profil":          _P_PROFIL,
+        "redner-vergleich":       _P_VERGL,
+        "fraktions-dynamik":      _P_FRAKDYN,
         "db-uebersicht":          _P_DB,
     }
 )
@@ -2164,7 +2785,7 @@ pg = st.navigation(
         "Willkommen":          [_P_START],
         "Kern-Analysen":       [_P_AGG, _P_THEMEN, _P_NETZ, _P_TOP],
         "Sprache & Ton":       [_P_TON, _P_ADR, _P_REAK],
-        "Parlaments-Metriken": [_P_REDEN, _P_KLIMA, _P_PROFIL, _P_WP],
+        "Parlaments-Metriken": [_P_REDEN, _P_KLIMA, _P_PROFIL, _P_VERGL, _P_FRAKDYN, _P_WP],
         "Werkzeuge & Daten":   [_P_MONITOR, _P_DB],
     }
 )
@@ -2176,10 +2797,17 @@ st.sidebar.title("🏛️ OpenParlament")
 st.sidebar.markdown("*Demokratie-Mining für den Bundestag*")
 st.sidebar.divider()
 
-wahlperioden = _get_wahlperioden()
+with st.sidebar:
+    with st.spinner("Lade Filter-Daten..."):
+        wahlperioden = _get_wahlperioden()
+        fraktionen = _get_fraktionen()
+
 selected_wp = st.sidebar.selectbox("Wahlperiode", wahlperioden, index=len(wahlperioden) - 1)
 
-date_min, date_max = _get_date_range(selected_wp)
+with st.sidebar:
+    with st.spinner("Lade Datumsbereich..."):
+        date_min, date_max = _get_date_range(selected_wp)
+
 datum_von = None
 datum_bis = None
 if date_min is not None and date_max is not None:
@@ -2190,19 +2818,22 @@ if date_min is not None and date_max is not None:
         "Bis", value=date_max, min_value=date_min, max_value=date_max
     )
 
-fraktionen = _get_fraktionen()
 selected_fraktion = st.sidebar.selectbox(
     "Fraktion (Filter Targets)", ["Alle"] + fraktionen
 )
 fraktion_filter = None if selected_fraktion == "Alle" else selected_fraktion
 
 st.sidebar.divider()
+if st.sidebar.button("🔄 Daten aktualisieren", help="Leert den Cache und lädt alle Daten neu."):
+    st.cache_data.clear()
+    st.toast("Cache geleert – Daten werden neu geladen.", icon="🔄")
+    st.rerun()
 st.sidebar.caption("### **Quellen:**  ")
 st.sidebar.markdown(
     """
     * [Bundestag Open Data](https://www.bundestag.de/services/opendata)  
-    * 🔒 [GitHub (Repo is *private* at the moment)](https://github.com/Jonas-dpp/OpenParlament) 🔒 
-    * 🌐 [GitHub (Public Release Repo)](https://github.com/Jonas-dpp/OpenParlament-online) 🌐 
+    * 🔒 [GitHub (Private Development Repo)](https://github.com/Jonas-dpp/OpenParlament)
+    * 🌐 [GitHub (Public Release Repo) (AGPLv3)](https://github.com/Jonas-dpp/OpenParlament-online) 
     """
 )
 

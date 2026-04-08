@@ -4,11 +4,19 @@
 
 [![Tests](https://github.com/Jonas-dpp/OpenParlament/actions/workflows/ci.yml/badge.svg)](https://github.com/Jonas-dpp/OpenParlament/actions)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Version](https://img.shields.io/badge/version-3.0.0-brightgreen.svg)](pyproject.toml)
+[![Schülerprojekt](https://img.shields.io/badge/🎓-Schülerprojekt-blueviolet.svg](README.md)
 
-Willkommen bei **OpenParlament**! Das Projekt analysiert die Plenarprotokolle des Deutschen Bundestags und macht verborgene politische Dynamiken über ein interaktives Streamlit-Dashboard sichtbar.
+Willkommen bei **OpenParlament** – einem **Schülerprojekt** zur NLP-gestützten Analyse der Plenarprotokolle des Deutschen Bundestags.
+Das Projekt macht verborgene politische Dynamiken über ein interaktives Streamlit-Dashboard sichtbar und wird
+offen auf GitHub entwickelt.
 
-**Zwölf Experimente + Dashboard-Tabs:**
+> **Version 3.0.0** — Neu: *Redner-Vergleich* (Experiment N) und *Fraktions-Dynamik* (Experiment O)
+> mit Sunburst-Charts, überlagerten Radar-Charts und monatlichen Zeitreihen.
+> Komplettes Codebase-Cleanup und vollständige Dokumentations-Überarbeitung.
+
+**Vierzehn Analysen + Dashboard-Tabs:**
 
 | # | Experiment | Frage | Version |
 |---|---|---|---|
@@ -24,17 +32,29 @@ Willkommen bei **OpenParlament**! Das Projekt analysiert die Plenarprotokolle de
 | M | ⏱️ Redezeit-Gerechtigkeit | Wird Redezeit proportional zur Fraktionsgröße verteilt? | v2.2.0 |
 | L | 🌡️ Debattenklima-Index | Wie heiß war das Parlament pro Sitzung? (Composite Temperatur-Index) | v2.4.0 |
 | K | 🎤 Redner-Profil | Was ist das rhetorische DNA-Profil jedes Abgeordneten? | v2.4.0 |
-| P | 🗄️ DB-Übersicht | Datenbankschema, Zeilenzähler, Sankey-Datenfluss & ERD | v2.6.0 |
-
-**Geplant für v2.6.0:**
-
-| # | Experiment | Frage |
-|---|---|---|
-| N | 🔍 Volltext-Suche | Durchsuche alle Reden und Zwischenrufe nach Freitext |
-| O | 👥 Redner-Vergleich | Vergleiche zwei Abgeordnete direkt: Ton, Redezeit, Aggressions-Profil |
-
+| N | 👥 Redner-Vergleich | Vergleiche zwei Abgeordnete direkt: Ton, Aggression, Redeaktivität | **v3.0.0** |
+| O | 📡 Fraktions-Dynamik | Sunburst & Zeitreihen: Wie entwickelt sich der Ton der Fraktionen? | **v3.0.0** |
+| P | 🗄️ DB-Übersicht | Datenbankschema, Zeilenzähler, Sankey-Datenfluss & ERD | v2.5.0 |
 
 Das System arbeitet **100 % lokal** (SQLite), ohne API-Kosten und nutzt quelloffene KI-Modelle (HuggingFace).
+
+---
+
+## ⚠️ Disclaimer
+
+OpenParlament ist ein **Schülerprojekt** zu Lehr- und Forschungszwecken. Die
+Analyseergebnisse basieren auf automatisierten NLP-Verfahren und stellen **keine politische
+Stellungnahme** dar. Die Nutzung erfolgt auf eigene Verantwortung.
+
+## 📜 Datenquelle & Lizenz
+
+Alle Plenarprotokolle stammen aus dem offenen Datenportal des Deutschen Bundestags:
+
+> **Bundestag Open Data** — <https://www.bundestag.de/services/opendata>  
+> Lizenz der Rohdaten: [Datenlizenz Deutschland – Namensnennung – Version 2.0](https://www.govdata.de/dl-de/by-2-0)
+
+Der Quellcode dieses Projekts steht unter der **GNU Affero General Public License v3 (AGPL-3.0-or-later)**.
+Eine Kopie der Lizenz findet sich in der Datei [`LICENSE`](LICENSE) im Repository-Wurzelverzeichnis.
 
 ---
 
@@ -172,6 +192,8 @@ streamlit run src/app.py
 | `RedeZeitAnalyse` | M | Speech-Time-Fairness-Index (nutzt `Rede.wortanzahl`) | v2.2.0 |
 | `SitzungsKlima` | L | Composite Temperatur-Index pro Sitzung | v2.4.0 |
 | `RednerProfil` | K | Rhetorischer Fingerabdruck aus `Rede.tone_scores` JSON | v2.4.0 |
+| `RednerVergleich` | N | Direktvergleich zweier Abgeordneter: Ton, Aggression, Rede-Aktivität | **v3.0.0** |
+| `FraktionsDynamik` | O | Fraktions-Ton-Zeitreihe, Aggressions-Timeline, Sunburst-Hierarchie | **v3.0.0** |
 | `DB-Übersicht` | P | Einblick in die Datenbankstruktur | v2.5.0 |
 
 ## 🗄️ DB-Übersicht (Tab P)
@@ -186,3 +208,73 @@ Die **DB-Übersicht** liefert einen vollständigen Einblick in die Datenbankstru
 | 📐 Schema-Übersicht | Live-Tabelle aller Spalten aus der aktiven Datenbank |
 | 🔑 Fremdschlüssel | FK- und UNIQUE-Constraints tabellarisch |
 
+
+---
+
+## 📜 Changelog
+
+### v3.0.0 (2026-04-07) — *Aktuelle Version*
+
+**Neue Analysen (Experiment N & O):**
+- **👥 Redner-Vergleich** (`RednerVergleich`): Zwei Abgeordnete direkt gegenüberstellen.
+  - Überlappende Radar-Charts für Ton-Profile beider Sprecher
+  - Divergenz-Balkendiagramm (A − B) je Ton-Label
+  - Gruppenbalken für Redeaktivität und Aggressions-Exposition nebeneinander
+- **📡 Fraktions-Dynamik** (`FraktionsDynamik`): Wie entwickelt sich der Ton der Fraktionen?
+  - Sunburst-Hierarchie: Fraktion → Ton-Label → Anzahl (interaktiv)
+  - Gestapeltes Flächendiagramm: monatliche Ton-Label-Häufigkeit je Fraktion
+  - Linien-Zeitreihe: monatlicher Aggressions-Score je Fraktion
+
+**UX & Codebase-Cleanup:**
+- Startseite: v3.0.0-Badge, Schülerprojekt-Hinweis, Versions-Übersichtstabelle
+- Alle 14 Analysen in der Übersichtstabelle auf der Startseite
+- Sidebar-Gruppe *Parlaments-Metriken* erweitert um Redner-Vergleich
+- Neue Sidebar-Gruppe *Werkzeuge & Daten* mit Fraktions-Dynamik, Scraping-Monitor, DB-Übersicht
+- Modul-Docstrings in `analytics.py` und `app.py` aktualisiert
+
+**Dokumentation:**
+- `pyproject.toml` auf Version 3.0.0 aktualisiert
+- `README.md`: neue Analysen, v3.0.0-Banner, Changelog-Abschnitt
+- `docs/Project.md`: v3.0.0-Meilenstein eingetragen
+
+---
+
+### v2.5.0
+
+- DB-Übersicht (Tab P): Sankey-Datenfluss, ERD (Mermaid), Schema-Inspector, Fremdschlüssel-Übersicht
+- Sidebar-Spinner-Optimierungen für schnelleres initiales Rendern
+
+### v2.4.0
+
+- **🌡️ Debattenklima-Index** (`SitzungsKlima`): Composite Temperatur-Index pro Sitzung
+- **🎤 Redner-Profil** (`RednerProfil`): Radar-Chart für rhetorischen Fingerabdruck; Top-Redner nach Ton-Label; Fraktions-Profil
+
+### v2.3.0 (integriert in v2.x)
+
+- Multi-WP Keyword-Trend (`ThemenKarriere.multi_wp_keyword_trend`)
+- Reizwort-Index: Keyword-Aggressions-Korrelation (`most_polarizing_keywords`)
+- Peak-Sitzungen je Wahlperiode
+
+### v2.2.0
+
+- **🏛️ Tagesordnungspunkte** (`TOPAnalyse`): Hostility-Ranking je Agenda-Item
+- **👏 Reaktions-Analyse** (`KategorieAnalyse`): Beifall vs. Widerspruch, Civility-Index
+- **⏱️ Redezeit-Gerechtigkeit** (`RedeZeitAnalyse`): Fairness-Index, Wortanzahl je Fraktion
+
+### v2.0.0
+
+- **⚖️ Wahlperioden-Vergleich** (`WahlperiodenVergleich`): Aggression, Ton und Aktivität über Legislaturperioden
+- Netzwerk-Evolution (Zeitfenster-Schieberegler)
+- Graph-Export: GraphML (NetworkX/yEd) und GEXF (Gephi)
+
+### v1.2.0
+
+- **🎭 Ton-Analyse** (`TonAnalyse`): Ton-Label-Verteilung nach Fraktion und Zeit
+- **🎯 Adressaten-Erkennung** (`AdressatenAnalyse`): Top-Adressaten, Fraktions-Ziel-Matrix
+- **📊 Scraping-Monitor** (`ScrapingMonitor`): NLP-Abdeckungsgrad, Übersicht nach Wahlperiode
+
+### v1.0.0
+
+- **🔥 Aggressions-Radar** (`AggressionsIndex`): Top-Targets und Top-Störer negativer Zwischenrufe
+- **📈 Themen-Trend** (`ThemenKarriere`): Keyword-Häufigkeit normiert pro 1 000 Wörter
+- **🕸️ Interaktions-Netzwerk** (`InteraktionsNetzwerk`): Fraktions-Adjazenzmatrix

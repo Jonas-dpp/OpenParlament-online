@@ -4,7 +4,7 @@
 
 ---
 
-## Current Version: v2.5.0
+## Current Version: v3.0.0
 
 ### Completed Milestones
 * [x] v0.0.0 — Project conceptualisation, Techstack defined (Python, SQLite, SQLAlchemy, Streamlit, HuggingFace).
@@ -51,6 +51,7 @@
 * [x] v2.4.0 — **Neue Analytics-Klassen (Tab L, K):** `SitzungsKlima` (per-session Temperatur-Index), `RednerProfil` (Speaker-Fingerprint aus `Rede.tone_scores` JSON). Tab L (Debattenklima), Tab K (Redner-Profil) im Dashboard.
 * [x] v2.2.0–v2.4.0 — **Test-Suite weiter ausgebaut**; alle grün. Vollständige Dokumentation (README, Pflichtenheft, Project.md) aktualisiert.
 * [x] v2.5.0 — **Native Navigation:** `st.navigation` / `st.Page` (Streamlit ≥ 1.36) ersetzt den alten Radio-Button-Hack mit manuellen `st.query_params`. 13 Seiten in vier Kategorien gruppiert: *Willkommen*, *Kern-Analysen*, *Sprache & Ton*, *Parlaments-Metriken*. `_navigate_to()` nutzt jetzt `st.switch_page()`. Startseite visuell aufgewertet: Live-Metriken, Experimente-Tabelle, Tech-Stack-Übersicht und Quick-Start-Guide. `Rede`-Import-Bug behoben. `pyproject.toml` auf v2.5.0 / `streamlit>=1.36` angehoben.
+* [x] v3.0.0 — **Neue Analysen N & O:** `RednerVergleich` (Direktvergleich zweier Abgeordneter mit überlagerten Radar-Charts, Divergenz-Balkendiagramm, gruppierten Balken für Redeaktivität und Aggressions-Exposition) und `FraktionsDynamik` (Sunburst-Hierarchie Fraktion→Ton-Label, gestapelte Flächendiagramme, monatliche Aggressions-Zeitreihen). 16 Dashboard-Seiten in fünf Sidebar-Kategorien. Startseite mit v3.0.0-Badge, Schülerprojekt-Hinweis und Versions-Übersichtstabelle. `pyproject.toml` auf v3.0.0 aktualisiert. Vollständiges Codebase-Cleanup und Dokumentations-Überarbeitung (README Changelog, docs/Project.md).
 
 
 ---
@@ -86,7 +87,7 @@
 | **v2.3.0** | Longitudinal & Sentiment Upgrades | `ThemenKarriere.multi_wp_keyword_trend`, `keyword_aggression_correlation`, `most_polarizing_keywords`. Tab B erweitert. | ✅ Done |
 | **v2.4.0** | Advanced Analytics | `SitzungsKlima` (Tab L: Temperatur-Index), `RednerProfil` (Tab K: Speaker DNA). | ✅ Done |
 | **v2.5.0** | Native Navigation & Enhanced Home | `st.navigation` / `st.Page` (Streamlit ≥ 1.36) mit 4 gruppierten Sidebar-Kategorien; `st.switch_page()` via `_PAGE_REGISTRY`; visuell aufgewertete Startseite (Live-Metriken, Experimente-Tabelle, Tech-Stack). | ✅ Done |
-| **v2.6.0** | Data Export & Speaker Comparison | CSV/Excel-Export für alle Analyse-Ergebnisse; neuer „Redner-Vergleich"-Tab (side-by-side Speaker Comparison); Volltext-Suche über alle Reden. | 🔜 Planned |
+| **v3.0.0** | UX-Verbesserung & Neue Analysen | `RednerVergleich` (Radar, Divergenz, Gruppen-Balken) und `FraktionsDynamik` (Sunburst, Flächendiagramm, Zeitreihen). 16 Seiten / 14 Analysen. Startseite: v3.0.0-Badge, Schülerprojekt-Hinweis, Versions-Übersichtstabelle. Codebase-Cleanup, Changelog, vollständige Dokumentation. | ✅ Done |
 
 
 ---
@@ -129,7 +130,7 @@
 │                                  │                            │
 │                                  v                            │
 │  ┌──────────────────────────────────────────────────────────┐ │
-│  │ Streamlit Dashboard  src/app.py  (v2.5.0)                │ │
+│  │ Streamlit Dashboard  src/app.py  (v3.0.0)                │ │
 │  │ Native st.navigation / st.Page (Streamlit ≥ 1.36)        │ │
 │  │ 13 Seiten in 4 Gruppen:                                  │ │
 │  │  Willkommen:                                             │ │

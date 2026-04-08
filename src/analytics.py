@@ -1,4 +1,21 @@
 """
+OpenParlament - Streamlit Dashboard
+Copyright (C) 2026 Jonas-dpp
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+--------------------------------------------------------------------------
 Analytics module for OpenParlament.
 
 Provides analysis classes corresponding to the core experiments:
@@ -15,6 +32,8 @@ I. KategorieAnalyse    – Zwischenruf category distribution (Applaus vs. Disrup
 M. RedeZeitAnalyse     – Speech-time fairness relative to faction size. [v2.2.0]
 L. SitzungsKlima       – Per-session parliamentary temperature index. [v2.4.0]
 K. RednerProfil        – Speaker rhetorical fingerprint from tone_scores JSON. [v2.4.0]
+N. RednerVergleich     – Side-by-side rhetorical comparison of two MPs. [v3.0.0]
+O. FraktionsDynamik    – Faction tone & aggression timeline + sunburst breakdown. [v3.0.0]
 
 All classes operate on a SQLAlchemy session and return Pandas DataFrames
 for direct use in the Streamlit frontend.
@@ -1385,7 +1404,10 @@ class TOPAnalyse:
             .join(Zwischenruf, Zwischenruf.rede_id == Rede.rede_id)
             .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
             .where(Rede.tagesordnungspunkt.isnot(None))
-            .where(Zwischenruf.sentiment_score.isnot(None))
+            # No sentiment_score filter here: SQL AVG ignores NULLs, and the
+            # CASE expression evaluates NULL < -0.3 as NULL → 0 (else branch),
+            # so TOPs appear even when the NLP pipeline has not yet been run on
+            # Zwischenrufe.  avg_aggression will be NaN for un-scored TOPs.
         )
         if wahlperiode:
             stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
@@ -1422,7 +1444,11 @@ class TOPAnalyse:
         return (
             df[["tagesordnungspunkt", "avg_aggression", "neg_zwischenrufe",
                 "gesamt_zwischenrufe", "anteil_negativ_pct", "anzahl_reden"]]
-            .sort_values("avg_aggression", ascending=False)
+            .sort_values(
+                ["avg_aggression", "gesamt_zwischenrufe"],
+                ascending=[False, False],
+                na_position="last",
+            )
             .head(n)
             .reset_index(drop=True)
         )
@@ -2200,3 +2226,393 @@ class RednerProfil:
             .reset_index()
         )
         return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# N. RednerVergleich  (v3.0.0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class RednerVergleich:
+    """Side-by-side rhetorical comparison of two MPs.
+
+    Compares two speakers across tone profiles, aggression exposure, and
+    speech-activity statistics so users can benchmark any two MPs against
+    each other in a single view.
+
+    Methods:
+        compare_tone_profiles  – Merged tone-profile DataFrame (one row per label).
+        compare_speech_stats   – High-level speech statistics for each speaker.
+        compare_aggression     – Aggression-exposure comparison (interjections received).
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._db = session
+
+    # ── internal helpers ──────────────────────────────────────────────────────
+
+    def _tone_profile(
+        self,
+        redner_id: int,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> Dict[str, float]:
+        """Return average tone-label probabilities for a single speaker."""
+        stmt = (
+            select(Rede.tone_scores)
+            .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
+            .where(Rede.redner_id == redner_id)
+            .where(Rede.tone_scores.isnot(None))
+        )
+        if wahlperiode:
+            stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
+        if datum_von:
+            stmt = stmt.where(Sitzung.datum >= datum_von)
+        if datum_bis:
+            stmt = stmt.where(Sitzung.datum <= datum_bis)
+        rows = self._db.execute(stmt).fetchall()
+        if not rows:
+            return {lbl: 0.0 for lbl in _TONE_LABELS_PROFILE}
+        totals: Dict[str, float] = {lbl: 0.0 for lbl in _TONE_LABELS_PROFILE}
+        n = 0
+        for (ts,) in rows:
+            if isinstance(ts, dict):
+                for lbl in _TONE_LABELS_PROFILE:
+                    totals[lbl] += float(ts.get(lbl, 0.0))
+                n += 1
+        if n == 0:
+            return totals
+        return {lbl: round(totals[lbl] / n, 4) for lbl in _TONE_LABELS_PROFILE}
+
+    def _speech_stats(
+        self,
+        redner_id: int,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> Dict[str, float]:
+        """Return basic speech statistics for a single speaker."""
+        stmt = (
+            select(
+                func.count(Rede.rede_id).label("reden"),
+                func.sum(Rede.wortanzahl).label("worte"),
+                func.avg(Rede.sentiment_score).label("avg_sent"),
+            )
+            .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
+            .where(Rede.redner_id == redner_id)
+        )
+        if wahlperiode:
+            stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
+        if datum_von:
+            stmt = stmt.where(Sitzung.datum >= datum_von)
+        if datum_bis:
+            stmt = stmt.where(Sitzung.datum <= datum_bis)
+        row = self._db.execute(stmt).fetchone()
+        reden = int(row[0]) if row and row[0] else 0
+        worte = int(row[1]) if row and row[1] else 0
+        avg_sent = round(float(row[2]), 4) if row and row[2] is not None else 0.0
+        return {"reden": reden, "worte": worte, "avg_sentiment": avg_sent}
+
+    def _aggression_received(
+        self,
+        redner_id: int,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> Dict[str, float]:
+        """Return interjection-aggression metrics for interjections during a speaker's speeches."""
+        stmt = (
+            select(
+                func.count(Zwischenruf.ruf_id).label("gesamt"),
+                func.sum(
+                    case((Zwischenruf.sentiment_score < 0, 1), else_=0)
+                ).label("negativ"),
+                func.avg(Zwischenruf.sentiment_score).label("avg_sent"),
+            )
+            .join(Rede, Rede.rede_id == Zwischenruf.rede_id)
+            .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
+            .where(Rede.redner_id == redner_id)
+            .where(Zwischenruf.sentiment_score.isnot(None))
+        )
+        if wahlperiode:
+            stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
+        if datum_von:
+            stmt = stmt.where(Sitzung.datum >= datum_von)
+        if datum_bis:
+            stmt = stmt.where(Sitzung.datum <= datum_bis)
+        row = self._db.execute(stmt).fetchone()
+        gesamt = int(row[0]) if row and row[0] else 0
+        negativ = int(row[1]) if row and row[1] else 0
+        avg_sent = round(float(row[2]), 4) if row and row[2] is not None else 0.0
+        return {
+            "zwischenrufe": gesamt,
+            "neg_zwischenrufe": negativ,
+            "avg_sentiment": avg_sent,
+            "anteil_negativ_pct": round(negativ / gesamt * 100, 1) if gesamt > 0 else 0.0,
+        }
+
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def compare_tone_profiles(
+        self,
+        redner_id_a: int,
+        redner_id_b: int,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """Compare tone profiles of two speakers.
+
+        Columns: label, speaker_a, speaker_b.
+
+        :param redner_id_a: First speaker's ``Redner.redner_id``.
+        :param redner_id_b: Second speaker's ``Redner.redner_id``.
+        :param wahlperiode: Optional Wahlperiode filter.
+        :param datum_von: Optional start date filter.
+        :param datum_bis: Optional end date filter.
+        """
+        profile_a = self._tone_profile(redner_id_a, wahlperiode, datum_von, datum_bis)
+        profile_b = self._tone_profile(redner_id_b, wahlperiode, datum_von, datum_bis)
+        rows = [
+            {"label": lbl, "speaker_a": profile_a[lbl], "speaker_b": profile_b[lbl]}
+            for lbl in _TONE_LABELS_PROFILE
+        ]
+        return pd.DataFrame(rows)
+
+    def compare_speech_stats(
+        self,
+        redner_id_a: int,
+        redner_id_b: int,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """Compare high-level speech statistics for two speakers.
+
+        Columns: Metrik, speaker_a, speaker_b.
+
+        :param redner_id_a: First speaker's ``Redner.redner_id``.
+        :param redner_id_b: Second speaker's ``Redner.redner_id``.
+        :param wahlperiode: Optional Wahlperiode filter.
+        :param datum_von: Optional start date filter.
+        :param datum_bis: Optional end date filter.
+        """
+        stats_a = self._speech_stats(redner_id_a, wahlperiode, datum_von, datum_bis)
+        stats_b = self._speech_stats(redner_id_b, wahlperiode, datum_von, datum_bis)
+        label_map = {
+            "reden": "Reden",
+            "worte": "Wörter gesamt",
+            "avg_sentiment": "Ø Sentiment",
+        }
+        rows = [
+            {"Metrik": label_map[k], "speaker_a": stats_a[k], "speaker_b": stats_b[k]}
+            for k in ("reden", "worte", "avg_sentiment")
+        ]
+        return pd.DataFrame(rows)
+
+    def compare_aggression(
+        self,
+        redner_id_a: int,
+        redner_id_b: int,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """Compare aggression exposure (interjections received) for two speakers.
+
+        Columns: Metrik, speaker_a, speaker_b.
+
+        :param redner_id_a: First speaker's ``Redner.redner_id``.
+        :param redner_id_b: Second speaker's ``Redner.redner_id``.
+        :param wahlperiode: Optional Wahlperiode filter.
+        :param datum_von: Optional start date filter.
+        :param datum_bis: Optional end date filter.
+        """
+        agg_a = self._aggression_received(redner_id_a, wahlperiode, datum_von, datum_bis)
+        agg_b = self._aggression_received(redner_id_b, wahlperiode, datum_von, datum_bis)
+        label_map = {
+            "zwischenrufe": "Zwischenrufe gesamt",
+            "neg_zwischenrufe": "Negative Zwischenrufe",
+            "anteil_negativ_pct": "Anteil negativ (%)",
+        }
+        rows = [
+            {"Metrik": label_map[k], "speaker_a": agg_a[k], "speaker_b": agg_b[k]}
+            for k in ("zwischenrufe", "neg_zwischenrufe", "anteil_negativ_pct")
+        ]
+        return pd.DataFrame(rows)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# O. FraktionsDynamik  (v3.0.0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FraktionsDynamik:
+    """Faction tone & aggression timeline plus hierarchical sunburst breakdown.
+
+    Tracks how each faction's rhetorical behaviour evolves over the course of
+    a Wahlperiode — from monthly tone-label distributions to per-session
+    aggression scores — and provides a sunburst-ready summary for a
+    hierarchical faction → tone view.
+
+    Methods:
+        tone_timeline      – Monthly tone-label counts per faction.
+        aggression_timeline – Monthly average aggression score per faction.
+        sunburst_data      – Faction → tone-label → count triples for sunburst chart.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self._db = session
+
+    def tone_timeline(
+        self,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """Return monthly tone-label counts per faction for interjections.
+
+        Columns: monat (YYYY-MM), fraktion, ton_label, anzahl.
+
+        :param wahlperiode: Optional Wahlperiode filter.
+        :param datum_von: Start date filter.
+        :param datum_bis: End date filter.
+        """
+        stmt = (
+            select(
+                Sitzung.datum,
+                Zwischenruf.fraktion,
+                Zwischenruf.ton_label,
+                func.count(Zwischenruf.ruf_id).label("anzahl"),
+            )
+            .join(Rede, Rede.rede_id == Zwischenruf.rede_id)
+            .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
+            .where(Zwischenruf.ton_label.isnot(None))
+            .where(Zwischenruf.fraktion.isnot(None))
+        )
+        if wahlperiode:
+            stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
+        if datum_von:
+            stmt = stmt.where(Sitzung.datum >= datum_von)
+        if datum_bis:
+            stmt = stmt.where(Sitzung.datum <= datum_bis)
+        stmt = stmt.group_by(Sitzung.datum, Zwischenruf.fraktion, Zwischenruf.ton_label)
+
+        rows = self._db.execute(stmt).fetchall()
+        if not rows:
+            return pd.DataFrame(columns=["monat", "fraktion", "ton_label", "anzahl"])
+
+        df = pd.DataFrame(rows, columns=["datum", "fraktion", "ton_label", "anzahl"])
+        df["datum"] = pd.to_datetime(df["datum"], errors="coerce")
+        df = df.dropna(subset=["datum"])
+        df["monat"] = df["datum"].dt.to_period("M").astype(str)
+        df["fraktion"] = df["fraktion"].apply(_canonicalise_faction)
+        result = (
+            df.groupby(["monat", "fraktion", "ton_label"])["anzahl"]
+            .sum()
+            .reset_index()
+            .sort_values(["monat", "fraktion", "ton_label"])
+        )
+        return result
+
+    def aggression_timeline(
+        self,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """Return monthly average aggression score (−sentiment) per interrupting faction.
+
+        Columns: monat (YYYY-MM), fraktion, avg_aggression, neg_count, total_count.
+
+        :param wahlperiode: Optional Wahlperiode filter.
+        :param datum_von: Start date filter.
+        :param datum_bis: End date filter.
+        """
+        stmt = (
+            select(
+                Sitzung.datum,
+                Zwischenruf.fraktion,
+                func.avg(Zwischenruf.sentiment_score).label("avg_sent"),
+                func.sum(
+                    case((Zwischenruf.sentiment_score < 0, 1), else_=0)
+                ).label("neg_count"),
+                func.count(Zwischenruf.ruf_id).label("total"),
+            )
+            .join(Rede, Rede.rede_id == Zwischenruf.rede_id)
+            .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
+            .where(Zwischenruf.sentiment_score.isnot(None))
+            .where(Zwischenruf.fraktion.isnot(None))
+        )
+        if wahlperiode:
+            stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
+        if datum_von:
+            stmt = stmt.where(Sitzung.datum >= datum_von)
+        if datum_bis:
+            stmt = stmt.where(Sitzung.datum <= datum_bis)
+        stmt = stmt.group_by(Sitzung.datum, Zwischenruf.fraktion)
+
+        rows = self._db.execute(stmt).fetchall()
+        if not rows:
+            return pd.DataFrame(
+                columns=["monat", "fraktion", "avg_aggression", "neg_count", "total_count"]
+            )
+
+        df = pd.DataFrame(rows, columns=["datum", "fraktion", "avg_sent", "neg_count", "total"])
+        df["datum"] = pd.to_datetime(df["datum"], errors="coerce")
+        df = df.dropna(subset=["datum"])
+        df["monat"] = df["datum"].dt.to_period("M").astype(str)
+        df["fraktion"] = df["fraktion"].apply(_canonicalise_faction)
+        # Aggregate per month × faction
+        agg = (
+            df.groupby(["monat", "fraktion"])
+            .agg(
+                avg_sent=("avg_sent", "mean"),
+                neg_count=("neg_count", "sum"),
+                total_count=("total", "sum"),
+            )
+            .reset_index()
+            .sort_values(["monat", "fraktion"])
+        )
+        agg["avg_aggression"] = (-agg["avg_sent"]).round(3)
+        return agg[["monat", "fraktion", "avg_aggression", "neg_count", "total_count"]]
+
+    def sunburst_data(
+        self,
+        wahlperiode: Optional[int] = None,
+        datum_von: Optional[date] = None,
+        datum_bis: Optional[date] = None,
+    ) -> pd.DataFrame:
+        """Return fraction → tone-label → count triples for a sunburst chart.
+
+        Columns: fraktion, ton_label, anzahl.
+
+        :param wahlperiode: Optional Wahlperiode filter.
+        :param datum_von: Start date filter.
+        :param datum_bis: End date filter.
+        """
+        stmt = (
+            select(
+                Zwischenruf.fraktion,
+                Zwischenruf.ton_label,
+                func.count(Zwischenruf.ruf_id).label("anzahl"),
+            )
+            .join(Rede, Rede.rede_id == Zwischenruf.rede_id)
+            .join(Sitzung, Sitzung.sitzungs_id == Rede.sitzung_id)
+            .where(Zwischenruf.ton_label.isnot(None))
+            .where(Zwischenruf.fraktion.isnot(None))
+        )
+        if wahlperiode:
+            stmt = stmt.where(Sitzung.wahlperiode == wahlperiode)
+        if datum_von:
+            stmt = stmt.where(Sitzung.datum >= datum_von)
+        if datum_bis:
+            stmt = stmt.where(Sitzung.datum <= datum_bis)
+        stmt = stmt.group_by(Zwischenruf.fraktion, Zwischenruf.ton_label)
+
+        rows = self._db.execute(stmt).fetchall()
+        if not rows:
+            return pd.DataFrame(columns=["fraktion", "ton_label", "anzahl"])
+
+        df = pd.DataFrame(rows, columns=["fraktion", "ton_label", "anzahl"])
+        df["fraktion"] = df["fraktion"].apply(_canonicalise_faction)
+        return df.sort_values(["fraktion", "ton_label"]).reset_index(drop=True)
